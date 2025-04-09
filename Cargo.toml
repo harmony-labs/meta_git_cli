@@ -11,3 +11,12 @@ crate-type = ["cdylib"]
 thiserror = "1.0"
 anyhow = "1.0"  # Since the Plugin trait uses anyhow::Result
 meta = { path = "../meta_cli" }  # Depend on the main meta package
+meta_plugin_api = { path = "../meta_plugin_api" }
+serde = { version = "1.0", features = ["derive"] }
+rayon = "1.7"
+serde_json = "1.0"
+indicatif = "0.17"
+dialoguer = "0.11"
+console = "0.15"
+ratatui = "0.24"
+crossterm = "0.27"
