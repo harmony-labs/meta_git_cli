@@ -1,14 +1,12 @@
-use std::process::Command;
+use console::style;
+use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
+use log::debug;
+use meta_plugin_api::{Plugin, HelpMode, PluginError};
+use serde::Deserialize;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
-
-use meta_plugin_api::{Plugin, HelpMode, PluginError};
-use rayon::prelude::*;
-use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
-use console::style;
+use std::process::Command;
 use std::time::Duration;
-use serde::Deserialize;
 
 use std::collections::HashMap;
 
@@ -37,8 +35,8 @@ impl Plugin for GitPlugin {
     }
 
     fn execute(&self, command: &str, args: &[String]) -> anyhow::Result<()> {
-        println!("[meta_git_cli] Plugin invoked with command: '{}'", command);
-        println!("[meta_git_cli] Args: {:?}", args);
+        debug!("[meta_git_cli] Plugin invoked with command: '{}'", command);
+        debug!("[meta_git_cli] Args: {:?}", args);
         match command {
             "git clone" => {
                 // Default options
