@@ -8,6 +8,7 @@ name = "meta_git_cli"
 crate-type = ["cdylib"]
 
 [dependencies]
+meta_git_lib = { path = "../meta_git_lib" }
 thiserror = "1.0"
 anyhow = "1.0"  # Since the Plugin trait uses anyhow::Result
 meta = { path = "../meta_cli" }  # Depend on the main meta package

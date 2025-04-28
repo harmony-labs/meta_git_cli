@@ -4,9 +4,12 @@ use log::debug;
 use meta_plugin_api::{Plugin, HelpMode, PluginError};
 use serde::Deserialize;
 use std::fs;
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use meta_git_lib;
+use std::time::Duration;
 use std::path::Path;
 use std::process::Command;
-use std::time::Duration;
 
 use std::collections::HashMap;
 
@@ -180,6 +183,10 @@ impl Plugin for GitPlugin {
                     pb.set_prefix(format!("[{}/{}]", i + 1, total));
                     pb.enable_steady_tick(Duration::from_millis(100));
                     pb.set_message(format!("Cloning {}", proj.name));
+                    // Use the shared clone logic for each repo
+                    let url = &proj.repo;
+                    let target_dir = std::path::Path::new(&proj.path);
+                    let _ = meta_git_lib::clone_repo_with_progress(url, target_dir, Some(&pb));
                     repo_pbs.push(pb);
                 }
 
@@ -187,14 +194,9 @@ impl Plugin for GitPlugin {
                     .unwrap()
                     .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ");
 
-                use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
-                use std::thread;
-                use std::time::Duration as StdDuration;
-
                 let progress_per_repo = Arc::new(
                     (0..projects.len()).map(|_| AtomicUsize::new(0)).collect::<Vec<_>>()
                 );
-
 
                 let mut handles = vec![];
                 let total = projects.len();
