@@ -61,17 +61,18 @@ impl Plugin for GitPlugin {
                 let mut projects = projects;
                 projects.sort_by(|a, b| a.name.cmp(&b.name));
                 let mut failed = 0;
+                let mut first = true;
                 for project in &projects {
+                    if !first {
+                        println!("");
+                    }
+                    first = false;
                     let repo_path = std::path::Path::new(&project.path);
                     if !repo_path.exists() {
-                        println!("\n{} {}", style("✗").red(), style(&project.name).red().bold());
-                        println!();
                         meta_git_lib::print_missing_repo(&project.name, &project.repo, repo_path);
                         failed += 1;
                         continue;
                     }
-                    println!("\n{} {}", style("✓").green(), style(&project.name).green().bold());
-                    println!();
                     let status = std::process::Command::new("git")
                         .arg("-C").arg(&project.path)
                         .arg("status")
@@ -79,13 +80,18 @@ impl Plugin for GitPlugin {
                         .stderr(std::process::Stdio::inherit())
                         .status();
                     match status {
-                        Ok(exit) if exit.success() => {},
+                        Ok(exit) if exit.success() => {
+                            println!();
+                            println!("{} {}", style("✓").green(), style(&project.name).green().bold());
+                        },
                         Ok(exit) => {
-                            println!("{} {}: git status exited with code {:?}", style("✗").red(), style(&project.name).bold(), exit.code());
+                            println!();
+                            println!("{} {} (git status exited with code {:?})", style("✗").red(), style(&project.name).red().bold(), exit.code());
                             failed += 1;
                         }
                         Err(e) => {
-                            println!("{} {}: Failed to run git status: {}", style("✗").red(), style(&project.name).bold(), e);
+                            println!();
+                            println!("{} {} (Failed to run git status: {})", style("✗").red(), style(&project.name).red().bold(), e);
                             failed += 1;
                         }
                     }
