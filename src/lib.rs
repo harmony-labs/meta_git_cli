@@ -34,13 +34,68 @@ impl Plugin for GitPlugin {
     }
 
     fn commands(&self) -> Vec<&'static str> {
-        vec!["git clone"]
+        vec!["git clone", "git status"]
     }
 
     fn execute(&self, command: &str, args: &[String]) -> anyhow::Result<()> {
         debug!("[meta_git_cli] Plugin invoked with command: '{}'", command);
         debug!("[meta_git_cli] Args: {:?}", args);
         match command {
+            "git status" => {
+                // Load meta config
+                let cwd = std::env::current_dir()?;
+                let meta_path = cwd.join(".meta");
+                if !meta_path.exists() {
+                    println!("No .meta file found in {}", cwd.display());
+                    return Ok(());
+                }
+                let meta_content = std::fs::read_to_string(meta_path)?;
+                let meta_config: MetaConfig = serde_json::from_str(&meta_content)?;
+                let projects: Vec<ProjectEntry> = meta_config.projects.into_iter().map(|(path, repo)| {
+                    ProjectEntry {
+                        name: path.clone(),
+                        path,
+                        repo,
+                    }
+                }).collect();
+                let mut projects = projects;
+                projects.sort_by(|a, b| a.name.cmp(&b.name));
+                let mut failed = 0;
+                for project in &projects {
+                    let repo_path = std::path::Path::new(&project.path);
+                    if !repo_path.exists() {
+                        println!("\n{} {}", style("✗").red(), style(&project.name).red().bold());
+                        println!();
+                        meta_git_lib::print_missing_repo(&project.name, &project.repo, repo_path);
+                        failed += 1;
+                        continue;
+                    }
+                    println!("\n{} {}", style("✓").green(), style(&project.name).green().bold());
+                    println!();
+                    let status = std::process::Command::new("git")
+                        .arg("-C").arg(&project.path)
+                        .arg("status")
+                        .stdout(std::process::Stdio::inherit())
+                        .stderr(std::process::Stdio::inherit())
+                        .status();
+                    match status {
+                        Ok(exit) if exit.success() => {},
+                        Ok(exit) => {
+                            println!("{} {}: git status exited with code {:?}", style("✗").red(), style(&project.name).bold(), exit.code());
+                            failed += 1;
+                        }
+                        Err(e) => {
+                            println!("{} {}: Failed to run git status: {}", style("✗").red(), style(&project.name).bold(), e);
+                            failed += 1;
+                        }
+                    }
+                }
+                if failed > 0 {
+                    println!("\nSummary: {} out of {} commands failed", style(format!("✗ {}", failed)).red(), projects.len());
+                    return Err(anyhow::anyhow!("At least one command failed"));
+                }
+                Ok(())
+            },
             "git clone" => {
                 // Default options
                 let mut recursive = false;
@@ -183,9 +238,14 @@ impl Plugin for GitPlugin {
                     pb.set_prefix(format!("[{}/{}]", i + 1, total));
                     pb.enable_steady_tick(Duration::from_millis(100));
                     pb.set_message(format!("Cloning {}", proj.name));
-                    // Use the shared clone logic for each repo
                     let url = &proj.repo;
                     let target_dir = std::path::Path::new(&proj.path);
+                    if !target_dir.exists() {
+                        meta_git_lib::print_missing_repo(&proj.name, &proj.repo, target_dir);
+                        pb.finish_with_message(format!("{} {} is not cloned locally.", style("✗").red(), style(&proj.name).bold()));
+                        repo_pbs.push(pb);
+                        continue;
+                    }
                     let _ = meta_git_lib::clone_repo_with_progress(url, target_dir, Some(&pb));
                     repo_pbs.push(pb);
                 }
