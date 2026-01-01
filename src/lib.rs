@@ -34,7 +34,7 @@ impl Plugin for GitPlugin {
     }
 
     fn commands(&self) -> Vec<&'static str> {
-        vec!["git clone", "git status"]
+        vec!["git clone", "git status", "git update", "git setup-ssh"]
     }
 
     fn execute(&self, command: &str, args: &[String]) -> anyhow::Result<()> {
@@ -377,11 +377,84 @@ impl Plugin for GitPlugin {
                 Ok(())
             }
             "git update" => {
-                let status = std::process::Command::new("git")
-                    .arg("pull")
-                    .status()?;
-                if !status.success() {
-                    anyhow::bail!("git pull failed");
+                // Load meta config
+                let cwd = std::env::current_dir()?;
+                let meta_path = cwd.join(".meta");
+                if !meta_path.exists() {
+                    println!("No .meta file found in {}", cwd.display());
+                    return Ok(());
+                }
+                let meta_content = std::fs::read_to_string(&meta_path)?;
+                let meta_config: MetaConfig = serde_json::from_str(&meta_content)?;
+
+                // Phase 1: Clone any missing repositories
+                let mut cloned_count = 0;
+                for (name, url) in &meta_config.projects {
+                    let repo_path = cwd.join(name);
+                    if !repo_path.exists() {
+                        println!("{} Cloning {}...", style("→").cyan(), style(name).bold());
+                        match meta_git_lib::clone_repo_with_progress(url, &repo_path, None) {
+                            Ok(_) => {
+                                println!("{} {} cloned", style("✓").green(), style(name).green().bold());
+                                cloned_count += 1;
+                            }
+                            Err(e) => {
+                                println!("{} {} failed to clone: {}", style("✗").red(), style(name).red().bold(), e);
+                            }
+                        }
+                    }
+                }
+
+                if cloned_count > 0 {
+                    println!();
+                    println!("Cloned {} new repositories", style(cloned_count).green());
+                    println!();
+                }
+
+                // Phase 2: Use loop engine to run `git pull` in parallel across all repos
+                let mut directories = vec![cwd.to_string_lossy().to_string()];
+                directories.extend(meta_config.projects.keys().map(|name| {
+                    cwd.join(name).to_string_lossy().to_string()
+                }));
+
+                let config = loop_lib::LoopConfig {
+                    directories,
+                    ignore: vec![],
+                    verbose: false,
+                    silent: false,
+                    add_aliases_to_global_looprc: false,
+                    include_filters: None,
+                    exclude_filters: None,
+                    parallel: true, // Always run in parallel for git update
+                };
+
+                let result = loop_lib::run(&config, "git pull");
+
+                // If there were failures and SSH multiplexing isn't configured, show hint
+                if result.is_err() && !meta_git_lib::is_multiplexing_configured() {
+                    meta_git_lib::print_multiplexing_hint();
+                }
+
+                result
+            }
+            "git setup-ssh" => {
+                if meta_git_lib::is_multiplexing_configured() {
+                    println!("{} SSH multiplexing is already configured.", style("✓").green());
+                    println!("  Your parallel git operations should work efficiently.");
+                } else {
+                    match meta_git_lib::prompt_and_setup_multiplexing() {
+                        Ok(true) => {
+                            println!();
+                            println!("You can now run {} without SSH rate limiting issues.",
+                                style("meta git update").cyan());
+                        }
+                        Ok(false) => {
+                            // User declined, message already shown
+                        }
+                        Err(e) => {
+                            println!("{} Failed to set up SSH multiplexing: {}", style("✗").red(), e);
+                        }
+                    }
                 }
                 Ok(())
             }
@@ -400,6 +473,15 @@ Meta-repo Commands:
       --recursive       Clone nested meta repositories recursively
       --parallel N      Clone up to N repositories in parallel
       --depth N         Create a shallow clone with truncated history
+
+  meta git update
+    Updates all repositories by cloning any missing repos and pulling the latest
+    changes. Runs in parallel for efficiency.
+
+  meta git setup-ssh
+    Configures SSH multiplexing for faster parallel git operations.
+    This allows multiple SSH connections to GitHub to share a single connection,
+    avoiding rate limiting issues.
 
     Examples:
       meta git clone https://github.com/example/meta-repo.git

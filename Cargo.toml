@@ -9,6 +9,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 meta_git_lib = { path = "../meta_git_lib" }
+loop_lib = { path = "../loop_lib" }
 thiserror = "1.0"
 anyhow = "1.0"  # Since the Plugin trait uses anyhow::Result
 meta = { path = "../meta_cli" }  # Depend on the main meta package
@@ -22,3 +23,4 @@ console = "0.15"
 ratatui = "0.24"
 crossterm = "0.27"
 log = "0.4"
+atty = "0.2"
