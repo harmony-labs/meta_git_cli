@@ -51,15 +51,25 @@ impl Plugin for GitPlugin {
                 }
                 let meta_content = std::fs::read_to_string(meta_path)?;
                 let meta_config: MetaConfig = serde_json::from_str(&meta_content)?;
-                let projects: Vec<ProjectEntry> = meta_config.projects.into_iter().map(|(path, repo)| {
+
+                // Start with the root directory
+                let mut projects: Vec<ProjectEntry> = vec![ProjectEntry {
+                    name: ".".to_string(),
+                    path: ".".to_string(),
+                    repo: String::new(),
+                }];
+
+                // Add child projects
+                let mut child_projects: Vec<ProjectEntry> = meta_config.projects.into_iter().map(|(path, repo)| {
                     ProjectEntry {
                         name: path.clone(),
                         path,
                         repo,
                     }
                 }).collect();
-                let mut projects = projects;
-                projects.sort_by(|a, b| a.name.cmp(&b.name));
+                child_projects.sort_by(|a, b| a.name.cmp(&b.name));
+                projects.extend(child_projects);
+
                 let mut failed = 0;
                 let mut first = true;
                 for project in &projects {
