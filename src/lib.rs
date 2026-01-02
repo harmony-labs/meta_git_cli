@@ -632,6 +632,7 @@ For standard git commands, see below.
 }
 
 #[no_mangle]
+#[allow(improper_ctypes_definitions)]
 pub extern "C" fn _plugin_create() -> *mut dyn Plugin {
     Box::into_raw(Box::new(GitPlugin))
 }
@@ -641,7 +642,6 @@ mod tests {
     use super::*;
     use meta_plugin_api::Plugin;
     use tempfile::TempDir;
-    use std::fs;
 
     #[test]
     fn test_git_plugin_name() {
