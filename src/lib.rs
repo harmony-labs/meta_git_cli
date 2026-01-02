@@ -508,3 +508,86 @@ For standard git commands, see below.
 pub extern "C" fn _plugin_create() -> *mut dyn Plugin {
     Box::into_raw(Box::new(GitPlugin))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use meta_plugin_api::Plugin;
+    use tempfile::TempDir;
+    use std::fs;
+
+    #[test]
+    fn test_git_plugin_name() {
+        let plugin = GitPlugin;
+        assert_eq!(plugin.name(), "git-clone");
+    }
+
+    #[test]
+    fn test_git_plugin_commands() {
+        let plugin = GitPlugin;
+        let commands = plugin.commands();
+        assert!(commands.contains(&"git clone"));
+        assert!(commands.contains(&"git status"));
+        assert!(commands.contains(&"git update"));
+        assert!(commands.contains(&"git setup-ssh"));
+    }
+
+    #[test]
+    fn test_git_plugin_help_output() {
+        let plugin = GitPlugin;
+        let help = plugin.get_help_output(&[]);
+        assert!(help.is_some());
+        let (mode, text) = help.unwrap();
+        assert!(matches!(mode, HelpMode::Prepend));
+        assert!(text.contains("meta git clone"));
+        assert!(text.contains("meta git update"));
+        assert!(text.contains("meta git setup-ssh"));
+    }
+
+    #[test]
+    fn test_git_status_no_meta_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let original_dir = std::env::current_dir().unwrap();
+
+        // Change to temp directory that has no .meta file
+        std::env::set_current_dir(temp_dir.path()).unwrap();
+
+        let plugin = GitPlugin;
+        let result = plugin.execute("git status", &[]);
+
+        // Restore original directory
+        std::env::set_current_dir(original_dir).unwrap();
+
+        // Should succeed (prints message and returns Ok)
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_meta_config_parsing() {
+        let json = r#"{"projects": {"foo": "git@github.com:org/foo.git", "bar": "git@github.com:org/bar.git"}}"#;
+        let config: MetaConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.projects.len(), 2);
+        assert!(config.projects.contains_key("foo"));
+        assert!(config.projects.contains_key("bar"));
+    }
+
+    #[test]
+    fn test_project_entry_clone() {
+        let entry = ProjectEntry {
+            name: "test".to_string(),
+            path: "/path/to/test".to_string(),
+            repo: "git@github.com:org/test.git".to_string(),
+        };
+        let cloned = entry.clone();
+        assert_eq!(cloned.name, entry.name);
+        assert_eq!(cloned.path, entry.path);
+        assert_eq!(cloned.repo, entry.repo);
+    }
+
+    #[test]
+    fn test_unknown_command() {
+        let plugin = GitPlugin;
+        let result = plugin.execute("git unknown", &[]);
+        assert!(result.is_err());
+    }
+}
