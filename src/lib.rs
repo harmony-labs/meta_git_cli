@@ -2,7 +2,7 @@ use console::style;
 use indicatif::{ProgressBar, ProgressStyle, MultiProgress};
 use log::debug;
 use meta_plugin_api::{Plugin, HelpMode, PluginError};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -12,6 +12,43 @@ use std::path::Path;
 use std::process::Command;
 
 use std::collections::HashMap;
+
+/// Check if JSON output mode is enabled
+fn is_json_output() -> bool {
+    std::env::var("META_JSON_OUTPUT").map(|v| v == "1").unwrap_or(false)
+}
+
+/// JSON output schema for meta commands
+#[derive(Debug, Serialize)]
+struct JsonOutput {
+    version: &'static str,
+    command: String,
+    timestamp: String,
+    results: Vec<ProjectResult>,
+    summary: OutputSummary,
+}
+
+#[derive(Debug, Serialize)]
+struct ProjectResult {
+    project: String,
+    path: String,
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stdout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stderr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct OutputSummary {
+    total: usize,
+    succeeded: usize,
+    failed: usize,
+}
 
 #[derive(Debug, Deserialize)]
 struct MetaConfig {
@@ -42,11 +79,28 @@ impl Plugin for GitPlugin {
         debug!("[meta_git_cli] Args: {:?}", args);
         match command {
             "git status" => {
+                let json_mode = is_json_output();
+                if std::env::var("META_DEBUG").is_ok() {
+                    eprintln!("[meta_git_cli] json_mode = {}, META_JSON_OUTPUT = {:?}",
+                        json_mode, std::env::var("META_JSON_OUTPUT"));
+                }
+
                 // Load meta config
                 let cwd = std::env::current_dir()?;
                 let meta_path = cwd.join(".meta");
                 if !meta_path.exists() {
-                    println!("No .meta file found in {}", cwd.display());
+                    if json_mode {
+                        let output = JsonOutput {
+                            version: "1.0",
+                            command: "git status".to_string(),
+                            timestamp: chrono::Utc::now().to_rfc3339(),
+                            results: vec![],
+                            summary: OutputSummary { total: 0, succeeded: 0, failed: 0 },
+                        };
+                        println!("{}", serde_json::to_string_pretty(&output)?);
+                    } else {
+                        println!("No .meta file found in {}", cwd.display());
+                    }
                     return Ok(());
                 }
                 let meta_content = std::fs::read_to_string(meta_path)?;
@@ -70,51 +124,124 @@ impl Plugin for GitPlugin {
                 child_projects.sort_by(|a, b| a.name.cmp(&b.name));
                 projects.extend(child_projects);
 
+                let mut results: Vec<ProjectResult> = Vec::new();
                 let mut failed = 0;
                 let mut first = true;
+
                 for project in &projects {
-                    if !first {
-                        println!("");
-                    }
-                    first = false;
                     let repo_path = std::path::Path::new(&project.path);
+
                     if !repo_path.exists() {
-                        meta_git_lib::print_missing_repo(&project.name, &project.repo, repo_path);
+                        if json_mode {
+                            results.push(ProjectResult {
+                                project: project.name.clone(),
+                                path: project.path.clone(),
+                                success: false,
+                                exit_code: None,
+                                stdout: None,
+                                stderr: None,
+                                error: Some(format!("Directory not found. Clone with: git clone {}", project.repo)),
+                            });
+                        } else {
+                            if !first { println!(""); }
+                            first = false;
+                            meta_git_lib::print_missing_repo(&project.name, &project.repo, repo_path);
+                        }
                         failed += 1;
                         continue;
                     }
-                    let status = std::process::Command::new("git")
-                        .arg("-C").arg(&project.path)
-                        .arg("status")
-                        .stdout(std::process::Stdio::inherit())
-                        .stderr(std::process::Stdio::inherit())
-                        .status();
-                    match status {
-                        Ok(exit) if exit.success() => {
-                            println!();
-                            println!("{} {}", style("✓").green(), style(&project.name).green().bold());
-                        },
-                        Ok(exit) => {
-                            println!();
-                            println!("{} {} (git status exited with code {:?})", style("✗").red(), style(&project.name).red().bold(), exit.code());
-                            failed += 1;
+
+                    if json_mode {
+                        // Capture output for JSON mode
+                        let output = std::process::Command::new("git")
+                            .arg("-C").arg(&project.path)
+                            .arg("status")
+                            .output();
+
+                        match output {
+                            Ok(out) => {
+                                let success = out.status.success();
+                                if !success { failed += 1; }
+                                results.push(ProjectResult {
+                                    project: project.name.clone(),
+                                    path: project.path.clone(),
+                                    success,
+                                    exit_code: out.status.code(),
+                                    stdout: Some(String::from_utf8_lossy(&out.stdout).to_string()),
+                                    stderr: if out.stderr.is_empty() { None } else { Some(String::from_utf8_lossy(&out.stderr).to_string()) },
+                                    error: None,
+                                });
+                            }
+                            Err(e) => {
+                                failed += 1;
+                                results.push(ProjectResult {
+                                    project: project.name.clone(),
+                                    path: project.path.clone(),
+                                    success: false,
+                                    exit_code: None,
+                                    stdout: None,
+                                    stderr: None,
+                                    error: Some(format!("Failed to run git status: {}", e)),
+                                });
+                            }
                         }
-                        Err(e) => {
-                            println!();
-                            println!("{} {} (Failed to run git status: {})", style("✗").red(), style(&project.name).red().bold(), e);
-                            failed += 1;
+                    } else {
+                        // Human-readable output
+                        if !first { println!(""); }
+                        first = false;
+
+                        let status = std::process::Command::new("git")
+                            .arg("-C").arg(&project.path)
+                            .arg("status")
+                            .stdout(std::process::Stdio::inherit())
+                            .stderr(std::process::Stdio::inherit())
+                            .status();
+
+                        match status {
+                            Ok(exit) if exit.success() => {
+                                println!();
+                                println!("{} {}", style("✓").green(), style(&project.name).green().bold());
+                            },
+                            Ok(exit) => {
+                                println!();
+                                println!("{} {} (git status exited with code {:?})", style("✗").red(), style(&project.name).red().bold(), exit.code());
+                                failed += 1;
+                            }
+                            Err(e) => {
+                                println!();
+                                println!("{} {} (Failed to run git status: {})", style("✗").red(), style(&project.name).red().bold(), e);
+                                failed += 1;
+                            }
                         }
                     }
                 }
-                if failed > 0 {
+
+                if json_mode {
+                    let output = JsonOutput {
+                        version: "1.0",
+                        command: "git status".to_string(),
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                        results,
+                        summary: OutputSummary {
+                            total: projects.len(),
+                            succeeded: projects.len() - failed,
+                            failed,
+                        },
+                    };
+                    println!("{}", serde_json::to_string_pretty(&output)?);
+                } else if failed > 0 {
                     println!("\nSummary: {} out of {} commands failed", style(format!("✗ {}", failed)).red(), projects.len());
+                    return Err(anyhow::anyhow!("At least one command failed"));
+                }
+
+                if failed > 0 && !json_mode {
                     return Err(anyhow::anyhow!("At least one command failed"));
                 }
                 Ok(())
             },
             "git clone" => {
                 // Default options
-                let mut recursive = false;
+                let mut _recursive = false;
                 let mut parallel = 1_usize;
                 let mut depth: Option<String> = None;
 
@@ -126,7 +253,7 @@ impl Plugin for GitPlugin {
                 while idx < args.len() {
                     match args[idx].as_str() {
                         "--recursive" => {
-                            recursive = true;
+                            _recursive = true;
                             idx += 1;
                         }
                         "--parallel" => {
