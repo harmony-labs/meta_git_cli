@@ -16,7 +16,9 @@ use std::time::Duration;
 
 /// Check if JSON output mode is enabled
 fn is_json_output() -> bool {
-    std::env::var("META_JSON_OUTPUT").map(|v| v == "1").unwrap_or(false)
+    std::env::var("META_JSON_OUTPUT")
+        .map(|v| v == "1")
+        .unwrap_or(false)
 }
 
 /// JSON output schema for meta commands
@@ -65,8 +67,8 @@ struct ProjectEntry {
 
 /// Execute a git command for meta repositories
 pub fn execute_command(command: &str, args: &[String]) -> anyhow::Result<()> {
-    debug!("[meta_git_cli] Plugin invoked with command: '{}'", command);
-    debug!("[meta_git_cli] Args: {:?}", args);
+    debug!("[meta_git_cli] Plugin invoked with command: '{command}'");
+    debug!("[meta_git_cli] Args: {args:?}");
 
     match command {
         "git status" => execute_git_status(),
@@ -232,7 +234,7 @@ fn execute_git_status() -> anyhow::Result<()> {
                         exit_code: None,
                         stdout: None,
                         stderr: None,
-                        error: Some(format!("Failed to run git status: {}", e)),
+                        error: Some(format!("Failed to run git status: {e}")),
                     });
                 }
             }
@@ -300,7 +302,7 @@ fn execute_git_status() -> anyhow::Result<()> {
     } else if failed > 0 {
         println!(
             "\nSummary: {} out of {} commands failed",
-            style(format!("✗ {}", failed)).red(),
+            style(format!("✗ {failed}")).red(),
             projects.len()
         );
         return Err(anyhow::anyhow!("At least one command failed"));
@@ -367,7 +369,7 @@ fn execute_git_clone(args: &[String]) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    println!("Cloning meta repository: {}", url);
+    println!("Cloning meta repository: {url}");
     let mut clone_cmd = Command::new("git");
     clone_cmd.arg("clone").args(&git_clone_args).arg(&url);
     let clone_dir = if let Some(dir) = &dir_arg {
@@ -425,24 +427,20 @@ fn execute_git_clone(args: &[String]) -> anyhow::Result<()> {
     );
 
     println!(
-        "{} {}Resolving meta manifest...",
-        style("[1/4]").bold().dim(),
-        "🔍  "
+        "{} 🔍  Resolving meta manifest...",
+        style("[1/4]").bold().dim()
     );
     println!(
-        "{} {}Fetching meta repository...",
-        style("[2/4]").bold().dim(),
-        "🚚  "
+        "{} 🚚  Fetching meta repository...",
+        style("[2/4]").bold().dim()
     );
     println!(
-        "{} {}Linking child repositories...",
-        style("[3/4]").bold().dim(),
-        "🔗  "
+        "{} 🔗  Linking child repositories...",
+        style("[3/4]").bold().dim()
     );
     println!(
-        "{} {}Cloning child repositories...",
-        style("[4/4]").bold().dim(),
-        "📃  "
+        "{} 📃  Cloning child repositories...",
+        style("[4/4]").bold().dim()
     );
 
     let mp = MultiProgress::new();
@@ -540,8 +538,8 @@ fn execute_git_clone(args: &[String]) -> anyhow::Result<()> {
                     std::thread::spawn(move || {
                         use std::io::{BufRead, BufReader};
                         let reader = BufReader::new(stdout);
-                        for line in reader.lines().flatten() {
-                            pb_clone.set_message(format!("{}: {}", proj_name, line));
+                        for line in reader.lines().map_while(Result::ok) {
+                            pb_clone.set_message(format!("{proj_name}: {line}"));
                             if let Some(percent) = parse_git_progress(&line) {
                                 progress_per_repo_clone[idx]
                                     .store(percent, std::sync::atomic::Ordering::Relaxed);
@@ -555,8 +553,8 @@ fn execute_git_clone(args: &[String]) -> anyhow::Result<()> {
                     std::thread::spawn(move || {
                         use std::io::{BufRead, BufReader};
                         let reader = BufReader::new(stderr);
-                        for line in reader.lines().flatten() {
-                            pb_clone2.set_message(format!("{}: {}", proj_name2, line));
+                        for line in reader.lines().map_while(Result::ok) {
+                            pb_clone2.set_message(format!("{proj_name2}: {line}"));
                             if let Some(percent) = parse_git_progress(&line) {
                                 progress_per_repo_clone2[idx]
                                     .store(percent, std::sync::atomic::Ordering::Relaxed);
@@ -730,8 +728,7 @@ mod tests {
 
     #[test]
     fn test_meta_config_parsing() {
-        let json =
-            r#"{"projects": {"foo": "git@github.com:org/foo.git", "bar": "git@github.com:org/bar.git"}}"#;
+        let json = r#"{"projects": {"foo": "git@github.com:org/foo.git", "bar": "git@github.com:org/bar.git"}}"#;
         let config: MetaConfig = serde_json::from_str(json).unwrap();
         assert_eq!(config.projects.len(), 2);
         assert!(config.projects.contains_key("foo"));

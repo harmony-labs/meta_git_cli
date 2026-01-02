@@ -85,7 +85,7 @@ fn main() -> Result<()> {
             let result = meta_git_cli::execute_command(&request.command, &request.args);
 
             if let Err(e) = result {
-                eprintln!("Error: {}", e);
+                eprintln!("Error: {e}");
                 std::process::exit(1);
             }
         }
