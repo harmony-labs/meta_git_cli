@@ -75,6 +75,7 @@ pub fn execute_command(command: &str, args: &[String]) -> anyhow::Result<()> {
         "git clone" => execute_git_clone(args),
         "git update" => execute_git_update(),
         "git setup-ssh" => execute_git_setup_ssh(),
+        "git commit" => execute_git_commit(args),
         _ => Err(anyhow::anyhow!("Unknown command: {}", command)),
     }
 }
@@ -82,9 +83,10 @@ pub fn execute_command(command: &str, args: &[String]) -> anyhow::Result<()> {
 /// Get help text for the plugin
 pub fn get_help_text() -> &'static str {
     r#"meta git - Meta CLI Git Plugin
-(This is NOT plain git)
 
-Meta-repo Commands:
+SPECIAL COMMANDS:
+  These commands have meta-specific implementations:
+
   meta git clone <meta-repo-url> [options]
     Clones the meta repository and all child repositories defined in its manifest.
 
@@ -99,14 +101,34 @@ Meta-repo Commands:
 
   meta git setup-ssh
     Configures SSH multiplexing for faster parallel git operations.
-    This allows multiple SSH connections to GitHub to share a single connection,
-    avoiding rate limiting issues.
 
-    Examples:
-      meta git clone https://github.com/example/meta-repo.git
-      meta git clone --parallel 4 --depth 1 https://github.com/example/meta-repo.git
+  meta git commit --edit
+    Opens an editor to create different commit messages for each repo.
 
-For standard git commands, see below.
+PASS-THROUGH COMMANDS:
+  All other git commands are passed through to each repository:
+
+    meta git status      - Run 'git status' in all repos
+    meta git pull        - Run 'git pull' in all repos
+    meta git push        - Run 'git push' in all repos
+    meta git checkout    - Run 'git checkout' in all repos
+    meta git <any>       - Run 'git <any>' in all repos
+
+FILTERING OPTIONS:
+  These meta/loop options work with all pass-through commands:
+
+    --tag <tags>        Filter by project tag(s), comma-separated
+    --include-only      Only run in specified directories
+    --exclude           Skip specified directories
+    --parallel          Run commands in parallel
+
+Examples:
+  meta git clone https://github.com/example/meta-repo.git
+  meta git status
+  meta git pull --rebase
+  meta git pull --tag backend
+  meta git commit --edit
+  meta git checkout -b feature/new --include-only api,frontend
 "#
 }
 
@@ -704,6 +726,324 @@ fn execute_git_setup_ssh() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Execute git commit with optional --edit flag for per-repo messages
+fn execute_git_commit(args: &[String]) -> anyhow::Result<()> {
+    // Parse arguments
+    let mut use_editor = false;
+    let mut message: Option<String> = None;
+    let mut idx = 0;
+
+    while idx < args.len() {
+        match args[idx].as_str() {
+            "--edit" | "-e" => {
+                use_editor = true;
+                idx += 1;
+            }
+            "-m" | "--message" => {
+                if idx + 1 < args.len() {
+                    message = Some(args[idx + 1].clone());
+                    idx += 2;
+                } else {
+                    idx += 1;
+                }
+            }
+            // Skip other args like "git", "commit"
+            _ => idx += 1,
+        }
+    }
+
+    // Load meta config
+    let cwd = std::env::current_dir()?;
+    let meta_path = cwd.join(".meta");
+    if !meta_path.exists() {
+        println!("No .meta file found in {}", cwd.display());
+        return Ok(());
+    }
+    let meta_content = std::fs::read_to_string(&meta_path)?;
+    let meta_config: MetaConfig = serde_json::from_str(&meta_content)?;
+
+    // Find repos with staged changes
+    let mut repos_with_changes: Vec<(String, String, Vec<String>)> = Vec::new();
+
+    // Check root repo
+    if has_staged_changes(".") {
+        let staged = get_staged_files(".");
+        repos_with_changes.push((".".to_string(), ".".to_string(), staged));
+    }
+
+    // Check child repos
+    for name in meta_config.projects.keys() {
+        let repo_path = cwd.join(name);
+        if repo_path.exists() && has_staged_changes(&repo_path.to_string_lossy()) {
+            let staged = get_staged_files(&repo_path.to_string_lossy());
+            repos_with_changes.push((
+                name.clone(),
+                repo_path.to_string_lossy().to_string(),
+                staged,
+            ));
+        }
+    }
+
+    if repos_with_changes.is_empty() {
+        println!("No staged changes found in any repository.");
+        return Ok(());
+    }
+
+    if use_editor {
+        // Open editor for per-repo messages
+        execute_editor_commit(&repos_with_changes)?;
+    } else if let Some(msg) = message {
+        // Apply same message to all repos
+        execute_bulk_commit(&repos_with_changes, &msg)?;
+    } else {
+        // No message provided, show what would be committed
+        println!("Repositories with staged changes:");
+        for (name, _path, files) in &repos_with_changes {
+            println!("  {} ({} files)", style(name).cyan(), files.len());
+        }
+        println!();
+        println!(
+            "Use {} to create per-repo commit messages",
+            style("--edit").yellow()
+        );
+        println!(
+            "Use {} to apply the same message to all",
+            style("-m \"message\"").yellow()
+        );
+    }
+
+    Ok(())
+}
+
+/// Check if a repo has staged changes
+fn has_staged_changes(path: &str) -> bool {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["diff", "--cached", "--quiet"])
+        .status();
+
+    match output {
+        Ok(status) => !status.success(), // Non-zero exit means there are changes
+        Err(_) => false,
+    }
+}
+
+/// Get list of staged files in a repo
+fn get_staged_files(path: &str) -> Vec<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["diff", "--cached", "--name-only"])
+        .output();
+
+    match output {
+        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(String::from)
+            .collect(),
+        _ => vec![],
+    }
+}
+
+/// Execute commit with editor for per-repo messages
+fn execute_editor_commit(repos: &[(String, String, Vec<String>)]) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    // Create temp file with commit template
+    let mut template = String::new();
+    template.push_str("# Meta Multi-Commit\n");
+    template.push_str("# Each section represents one repository.\n");
+    template.push_str("# Edit the message below each header.\n");
+    template.push_str("# Delete a section entirely or leave message empty to skip that repo.\n");
+    template.push_str("#\n\n");
+
+    for (name, _path, files) in repos {
+        template.push_str(&format!("========== {name} ==========\n"));
+        let file_count = files.len();
+        let file_list = files.join(", ");
+        template.push_str(&format!("# {file_count} file(s) staged: {file_list}\n"));
+        template.push('\n');
+        template.push_str("# Enter commit message above this line\n\n");
+    }
+
+    // Write to temp file
+    let temp_dir = std::env::temp_dir();
+    let temp_file = temp_dir.join("META_COMMIT_EDITMSG");
+    let mut file = std::fs::File::create(&temp_file)?;
+    file.write_all(template.as_bytes())?;
+    drop(file);
+
+    // Get editor from environment
+    let editor = std::env::var("EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .unwrap_or_else(|_| "vi".to_string());
+
+    // Open editor
+    let status = Command::new(&editor).arg(&temp_file).status()?;
+
+    if !status.success() {
+        anyhow::bail!("Editor exited with non-zero status");
+    }
+
+    // Read and parse the edited file
+    let content = std::fs::read_to_string(&temp_file)?;
+    let commits = parse_multi_commit_file(&content);
+
+    // Clean up temp file
+    let _ = std::fs::remove_file(&temp_file);
+
+    if commits.is_empty() {
+        println!("No commits to make (all messages were empty or deleted).");
+        return Ok(());
+    }
+
+    // Execute commits
+    let mut succeeded = 0;
+    let mut failed = 0;
+
+    for (repo_name, message) in &commits {
+        // Find the path for this repo
+        let path = repos
+            .iter()
+            .find(|(name, _, _)| name == repo_name)
+            .map(|(_, path, _)| path.as_str())
+            .unwrap_or(repo_name);
+
+        println!(
+            "{} Committing {}...",
+            style("→").cyan(),
+            style(repo_name).bold()
+        );
+
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .arg("commit")
+            .arg("-m")
+            .arg(message)
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                println!(
+                    "  {} {}",
+                    style("✓").green(),
+                    message.lines().next().unwrap_or("")
+                );
+                succeeded += 1;
+            }
+            _ => {
+                println!("  {} Failed to commit", style("✗").red());
+                failed += 1;
+            }
+        }
+    }
+
+    println!();
+    if failed > 0 {
+        println!(
+            "Committed {} repo(s), {} failed",
+            style(succeeded).green(),
+            style(failed).red()
+        );
+    } else {
+        println!("Committed {} repo(s)", style(succeeded).green());
+    }
+
+    Ok(())
+}
+
+/// Parse the multi-commit file content
+fn parse_multi_commit_file(content: &str) -> Vec<(String, String)> {
+    let mut commits = Vec::new();
+    let mut current_repo: Option<String> = None;
+    let mut current_message = String::new();
+
+    for line in content.lines() {
+        if line.starts_with("==========") && line.ends_with("==========") {
+            // Save previous repo if it had a message
+            if let Some(repo) = current_repo.take() {
+                let msg = current_message.trim().to_string();
+                if !msg.is_empty() {
+                    commits.push((repo, msg));
+                }
+            }
+            // Parse new repo name
+            let repo = line
+                .trim_start_matches('=')
+                .trim_end_matches('=')
+                .trim()
+                .to_string();
+            current_repo = Some(repo);
+            current_message.clear();
+        } else if !line.starts_with('#') && current_repo.is_some() {
+            // Add non-comment lines to current message
+            current_message.push_str(line);
+            current_message.push('\n');
+        }
+    }
+
+    // Don't forget the last repo
+    if let Some(repo) = current_repo {
+        let msg = current_message.trim().to_string();
+        if !msg.is_empty() {
+            commits.push((repo, msg));
+        }
+    }
+
+    commits
+}
+
+/// Execute bulk commit with same message for all repos
+fn execute_bulk_commit(
+    repos: &[(String, String, Vec<String>)],
+    message: &str,
+) -> anyhow::Result<()> {
+    let mut succeeded = 0;
+    let mut failed = 0;
+
+    for (name, path, _files) in repos {
+        println!("{} Committing {}...", style("→").cyan(), style(name).bold());
+
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(path)
+            .arg("commit")
+            .arg("-m")
+            .arg(message)
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                println!(
+                    "  {} {}",
+                    style("✓").green(),
+                    message.lines().next().unwrap_or("")
+                );
+                succeeded += 1;
+            }
+            _ => {
+                println!("  {} Failed to commit", style("✗").red());
+                failed += 1;
+            }
+        }
+    }
+
+    println!();
+    if failed > 0 {
+        println!(
+            "Committed {} repo(s), {} failed",
+            style(succeeded).green(),
+            style(failed).red()
+        );
+    } else {
+        println!("Committed {} repo(s)", style(succeeded).green());
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -760,5 +1100,161 @@ mod tests {
         assert!(help.contains("meta git clone"));
         assert!(help.contains("meta git update"));
         assert!(help.contains("meta git setup-ssh"));
+    }
+
+    #[test]
+    fn test_parse_multi_commit_file() {
+        let content = r#"# Meta Multi-Commit
+# Each section represents one repository.
+
+========== meta_cli ==========
+# 3 file(s) staged: src/main.rs, src/lib.rs, Cargo.toml
+
+feat: add new feature
+
+========== meta_mcp ==========
+# 2 file(s) staged: src/main.rs, Cargo.toml
+
+fix: fix bug in MCP server
+
+========== empty_repo ==========
+# 1 file(s) staged: file.rs
+
+# No message here - should be skipped
+
+"#;
+
+        let commits = parse_multi_commit_file(content);
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].0, "meta_cli");
+        assert_eq!(commits[0].1, "feat: add new feature");
+        assert_eq!(commits[1].0, "meta_mcp");
+        assert_eq!(commits[1].1, "fix: fix bug in MCP server");
+    }
+
+    #[test]
+    fn test_parse_multi_commit_file_multiline_message() {
+        let content = r#"========== repo1 ==========
+# 1 file staged
+
+feat: add feature
+
+This is a longer description
+that spans multiple lines.
+
+- bullet point 1
+- bullet point 2
+"#;
+
+        let commits = parse_multi_commit_file(content);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].0, "repo1");
+        assert!(commits[0].1.contains("feat: add feature"));
+        assert!(commits[0].1.contains("bullet point 1"));
+    }
+
+    #[test]
+    fn test_parse_multi_commit_file_empty() {
+        let content = "";
+        let commits = parse_multi_commit_file(content);
+        assert!(commits.is_empty());
+    }
+
+    #[test]
+    fn test_parse_multi_commit_file_only_comments() {
+        let content = r#"# Meta Multi-Commit
+# Each section represents one repository.
+# This file has only comments
+"#;
+        let commits = parse_multi_commit_file(content);
+        assert!(commits.is_empty());
+    }
+
+    #[test]
+    fn test_parse_multi_commit_file_whitespace_only_message() {
+        let content = r#"========== repo1 ==========
+# 1 file staged
+
+
+
+
+========== repo2 ==========
+# 1 file staged
+
+valid message
+"#;
+        let commits = parse_multi_commit_file(content);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].0, "repo2");
+        assert_eq!(commits[0].1, "valid message");
+    }
+
+    #[test]
+    fn test_parse_multi_commit_file_special_characters_in_repo_name() {
+        let content = r#"========== my-repo_v2.0 ==========
+# 1 file staged
+
+fix: handle special chars
+"#;
+        let commits = parse_multi_commit_file(content);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].0, "my-repo_v2.0");
+    }
+
+    #[test]
+    fn test_parse_multi_commit_file_preserves_message_whitespace() {
+        let content = r#"========== repo ==========
+# staged files
+
+first line
+  indented line
+    more indent
+
+last line
+"#;
+        let commits = parse_multi_commit_file(content);
+        assert_eq!(commits.len(), 1);
+        assert!(commits[0].1.contains("  indented line"));
+        assert!(commits[0].1.contains("    more indent"));
+    }
+
+    #[test]
+    fn test_parse_multi_commit_file_deleted_section() {
+        // Simulates user deleting a section entirely
+        let content = r#"========== repo1 ==========
+# 1 file staged
+
+first commit
+
+========== repo3 ==========
+# 1 file staged
+
+third commit
+"#;
+        let commits = parse_multi_commit_file(content);
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].0, "repo1");
+        assert_eq!(commits[1].0, "repo3");
+    }
+
+    #[test]
+    fn test_parse_multi_commit_file_single_repo() {
+        let content = r#"========== only_repo ==========
+# 5 files staged
+
+the only commit message
+"#;
+        let commits = parse_multi_commit_file(content);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].0, "only_repo");
+        assert_eq!(commits[0].1, "the only commit message");
+    }
+
+    #[test]
+    fn test_help_text_contains_commit_edit() {
+        let help = get_help_text();
+        assert!(help.contains("meta git commit --edit"));
+        assert!(help.contains("PASS-THROUGH COMMANDS"));
+        assert!(help.contains("FILTERING OPTIONS"));
     }
 }

@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::{self, Read};
 
 /// Plugin info returned by --meta-plugin-info
@@ -14,6 +15,16 @@ struct PluginInfo {
     version: String,
     commands: Vec<String>,
     description: Option<String>,
+    help: Option<PluginHelp>,
+}
+
+/// Help information for the plugin
+#[derive(Debug, Serialize)]
+struct PluginHelp {
+    usage: String,
+    commands: HashMap<String, String>,
+    examples: Vec<String>,
+    note: Option<String>,
 }
 
 /// Request received from meta CLI via --meta-plugin-exec
@@ -51,6 +62,28 @@ fn main() -> Result<()> {
 
     match args[1].as_str() {
         "--meta-plugin-info" => {
+            let mut help_commands = HashMap::new();
+            help_commands.insert(
+                "clone".to_string(),
+                "Clone a meta repository and all child repos".to_string(),
+            );
+            help_commands.insert(
+                "status".to_string(),
+                "Show git status for all repos".to_string(),
+            );
+            help_commands.insert(
+                "update".to_string(),
+                "Pull latest changes and clone missing repos".to_string(),
+            );
+            help_commands.insert(
+                "setup-ssh".to_string(),
+                "Configure SSH multiplexing for faster operations".to_string(),
+            );
+            help_commands.insert(
+                "commit".to_string(),
+                "Commit changes with per-repo messages".to_string(),
+            );
+
             let info = PluginInfo {
                 name: "git".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
@@ -59,8 +92,24 @@ fn main() -> Result<()> {
                     "git status".to_string(),
                     "git update".to_string(),
                     "git setup-ssh".to_string(),
+                    "git commit".to_string(),
                 ],
                 description: Some("Git operations for meta repositories".to_string()),
+                help: Some(PluginHelp {
+                    usage: "meta git <command> [args...]".to_string(),
+                    commands: help_commands,
+                    examples: vec![
+                        "meta git clone https://github.com/org/meta-repo.git".to_string(),
+                        "meta git status".to_string(),
+                        "meta git update".to_string(),
+                        "meta git commit --edit".to_string(),
+                        "meta git commit -m \"Update all repos\"".to_string(),
+                    ],
+                    note: Some(
+                        "To run raw git commands across repos: meta exec -- git <command>"
+                            .to_string(),
+                    ),
+                }),
             };
             println!("{}", serde_json::to_string(&info)?);
         }
