@@ -50,6 +50,8 @@ struct PluginRequestOptions {
     verbose: bool,
     #[serde(default)]
     parallel: bool,
+    #[serde(default)]
+    dry_run: bool,
 }
 
 fn main() -> Result<()> {
@@ -123,6 +125,9 @@ fn main() -> Result<()> {
             // Set environment variables based on options
             if request.options.json_output {
                 std::env::set_var("META_JSON_OUTPUT", "1");
+            }
+            if request.options.dry_run {
+                std::env::set_var("META_DRY_RUN", "1");
             }
 
             // Change to the specified working directory if provided
