@@ -135,8 +135,13 @@ fn main() -> Result<()> {
                 std::env::set_current_dir(&request.cwd)?;
             }
 
-            // Execute the command
-            let result = meta_git_cli::execute_command(&request.command, &request.args);
+            // Execute the command, passing the projects list from meta_cli
+            // This enables --recursive to work properly (meta_cli discovers nested projects)
+            let result = meta_git_cli::execute_command(
+                &request.command,
+                &request.args,
+                &request.projects,
+            );
 
             if let Err(e) = result {
                 eprintln!("Error: {e}");

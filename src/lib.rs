@@ -5,16 +5,360 @@
 use console::style;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use log::debug;
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::AtomicUsize;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+// ============================================================================
+// Queue-based Recursive Cloning System
+// ============================================================================
+
+/// A clone task representing a single repository to clone
+#[derive(Debug, Clone)]
+struct CloneTask {
+    /// Display name for progress output
+    name: String,
+    /// Git URL to clone from
+    url: String,
+    /// Target path to clone into
+    target_path: PathBuf,
+    /// Depth level (for display purposes)
+    depth_level: usize,
+}
+
+/// Thread-safe queue for managing clone tasks with dynamic discovery
+struct CloneQueue {
+    /// Pending tasks to process
+    pending: Mutex<Vec<CloneTask>>,
+    /// Completed task paths (to avoid duplicates)
+    completed: Mutex<HashSet<PathBuf>>,
+    /// Failed task paths
+    failed: Mutex<HashSet<PathBuf>>,
+    /// Total tasks discovered (for progress display)
+    total_discovered: AtomicUsize,
+    /// Total tasks completed
+    total_completed: AtomicUsize,
+    /// Git depth argument (if any)
+    git_depth: Option<String>,
+    /// Max meta depth for recursion (None = unlimited)
+    meta_depth: Option<usize>,
+}
+
+impl CloneQueue {
+    fn new(git_depth: Option<String>, meta_depth: Option<usize>) -> Self {
+        Self {
+            pending: Mutex::new(Vec::new()),
+            completed: Mutex::new(HashSet::new()),
+            failed: Mutex::new(HashSet::new()),
+            total_discovered: AtomicUsize::new(0),
+            total_completed: AtomicUsize::new(0),
+            git_depth,
+            meta_depth,
+        }
+    }
+
+    /// Add a task to the queue if not already completed or pending
+    fn push(&self, task: CloneTask) -> bool {
+        let path = task.target_path.clone();
+
+        // Check if already completed
+        {
+            let completed = self.completed.lock().unwrap();
+            if completed.contains(&path) {
+                return false;
+            }
+        }
+
+        // Add to pending
+        {
+            let mut pending = self.pending.lock().unwrap();
+            // Check if already in pending
+            if pending.iter().any(|t| t.target_path == path) {
+                return false;
+            }
+            pending.push(task);
+            self.total_discovered.fetch_add(1, Ordering::SeqCst);
+        }
+
+        true
+    }
+
+    /// Add multiple tasks from a .meta file
+    fn push_from_meta(&self, base_dir: &Path, depth_level: usize) -> anyhow::Result<usize> {
+        // Check meta depth limit
+        if let Some(max_depth) = self.meta_depth {
+            if depth_level > max_depth {
+                return Ok(0);
+            }
+        }
+
+        let meta_path = base_dir.join(".meta");
+        if !meta_path.exists() {
+            return Ok(0);
+        }
+
+        let meta_content = fs::read_to_string(&meta_path)?;
+        let meta_config: MetaConfig = serde_json::from_str(&meta_content)?;
+
+        let mut added = 0;
+        for (name, url) in meta_config.projects {
+            let target_path = base_dir.join(&name);
+
+            // Skip if already exists
+            if target_path.exists() {
+                // But still check if it has a .meta file for nested discovery
+                let nested_meta = target_path.join(".meta");
+                if nested_meta.exists() {
+                    // Queue it for .meta discovery even though it's already cloned
+                    added += self.push_from_meta(&target_path, depth_level + 1)?;
+                }
+                continue;
+            }
+
+            let task = CloneTask {
+                name,
+                url,
+                target_path,
+                depth_level,
+            };
+
+            if self.push(task) {
+                added += 1;
+            }
+        }
+
+        Ok(added)
+    }
+
+    /// Take a single task from the queue (for worker threads)
+    fn take_one(&self) -> Option<CloneTask> {
+        let mut pending = self.pending.lock().unwrap();
+        pending.pop()
+    }
+
+    /// Check if queue is finished (no pending and no active workers)
+    fn is_finished(&self, active_workers: &AtomicUsize) -> bool {
+        let pending = self.pending.lock().unwrap();
+        pending.is_empty() && active_workers.load(Ordering::SeqCst) == 0
+    }
+
+    /// Drain all pending tasks (for dry-run display)
+    fn drain_all(&self) -> Vec<CloneTask> {
+        let mut pending = self.pending.lock().unwrap();
+        pending.drain(..).collect()
+    }
+
+    /// Get current counts for display
+    fn get_counts(&self) -> (usize, usize) {
+        (
+            self.total_completed.load(Ordering::SeqCst),
+            self.total_discovered.load(Ordering::SeqCst),
+        )
+    }
+
+    /// Mark a task as completed and check for nested .meta files
+    fn mark_completed(&self, task: &CloneTask) -> anyhow::Result<usize> {
+        self.total_completed.fetch_add(1, Ordering::SeqCst);
+
+        {
+            let mut completed = self.completed.lock().unwrap();
+            completed.insert(task.target_path.clone());
+        }
+
+        // Check for nested .meta file and add children to queue
+        self.push_from_meta(&task.target_path, task.depth_level + 1)
+    }
+
+    /// Mark a task as failed
+    fn mark_failed(&self, task: &CloneTask) {
+        self.total_completed.fetch_add(1, Ordering::SeqCst);
+
+        let mut failed = self.failed.lock().unwrap();
+        failed.insert(task.target_path.clone());
+    }
+}
+
+/// Clone repositories using a worker pool where each worker continuously pulls from the queue
+fn clone_with_queue(
+    queue: Arc<CloneQueue>,
+    parallelism: usize,
+    mp: &MultiProgress,
+) -> anyhow::Result<()> {
+    use std::sync::Condvar;
+
+    let spinner_style = ProgressStyle::with_template("{prefix:.bold.dim} {spinner} {wide_msg}")
+        .unwrap()
+        .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ");
+
+    // Track active workers for termination detection
+    let active_workers = Arc::new(AtomicUsize::new(0));
+    // Condition variable to signal when work might be available or workers finish
+    let work_signal = Arc::new((Mutex::new(false), Condvar::new()));
+
+    // Spawn worker threads
+    let handles: Vec<_> = (0..parallelism)
+        .map(|_worker_id| {
+            let queue = Arc::clone(&queue);
+            let active = Arc::clone(&active_workers);
+            let signal = Arc::clone(&work_signal);
+            let mp = mp.clone();
+            let style = spinner_style.clone();
+
+            std::thread::spawn(move || {
+                loop {
+                    // Try to get a task
+                    let task = queue.take_one();
+
+                    match task {
+                        Some(task) => {
+                            // Mark worker as active
+                            active.fetch_add(1, Ordering::SeqCst);
+
+                            // Create progress bar for this task
+                            let (completed, total) = queue.get_counts();
+                            let pb = mp.add(ProgressBar::new_spinner());
+                            pb.set_style(style.clone());
+                            pb.set_prefix(format!("[{}/{}]", completed + 1, total));
+                            pb.set_message(format!("Cloning {}", task.name));
+                            pb.enable_steady_tick(Duration::from_millis(100));
+
+                            // Clone the repo (this may add new tasks to queue)
+                            clone_single_repo(&task, &queue, &pb);
+
+                            // Mark worker as inactive
+                            active.fetch_sub(1, Ordering::SeqCst);
+
+                            // Signal that we're done (might enable termination check)
+                            let (lock, cvar) = &*signal;
+                            let mut done = lock.lock().unwrap();
+                            *done = true;
+                            cvar.notify_all();
+                        }
+                        None => {
+                            // No task available - check if we should terminate
+                            if queue.is_finished(&active) {
+                                break;
+                            }
+
+                            // Wait for signal that work might be available
+                            let (lock, cvar) = &*signal;
+                            let done = lock.lock().unwrap();
+                            // Wait with timeout to periodically recheck
+                            let _ = cvar.wait_timeout(done, Duration::from_millis(50));
+                        }
+                    }
+                }
+            })
+        })
+        .collect();
+
+    // Wait for all workers to finish
+    for handle in handles {
+        handle.join().expect("Worker thread panicked");
+    }
+
+    Ok(())
+}
+
+/// Clone a single repository and handle .meta discovery
+fn clone_single_repo(task: &CloneTask, queue: &Arc<CloneQueue>, pb: &ProgressBar) {
+    // Skip if target exists
+    if task.target_path.exists()
+        && task
+            .target_path
+            .read_dir()
+            .map(|mut iter| iter.next().is_some())
+            .unwrap_or(false)
+    {
+        pb.finish_with_message(format!(
+            "{}",
+            style(format!("Skipped {} (exists)", task.name)).yellow()
+        ));
+        // Still mark as completed and check for nested .meta
+        if let Err(e) = queue.mark_completed(task) {
+            debug!("Failed to check nested .meta for {}: {}", task.name, e);
+        }
+        return;
+    }
+
+    // Build git clone command
+    let mut cmd = Command::new("git");
+    cmd.arg("clone").arg(&task.url).arg(&task.target_path);
+    if let Some(ref d) = queue.git_depth {
+        cmd.arg("--depth").arg(d);
+    }
+
+    // Run clone
+    match cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(mut child) => {
+            // Stream stderr for progress updates
+            let stderr = child.stderr.take();
+            let pb_clone = pb.clone();
+            let task_name = task.name.clone();
+            if let Some(stderr) = stderr {
+                std::thread::spawn(move || {
+                    use std::io::{BufRead, BufReader};
+                    let reader = BufReader::new(stderr);
+                    for line in reader.lines().map_while(Result::ok) {
+                        pb_clone.set_message(format!("{}: {}", task_name, line));
+                    }
+                });
+            }
+
+            match child.wait() {
+                Ok(status) if status.success() => {
+                    // Check for nested .meta and report new discoveries
+                    match queue.mark_completed(task) {
+                        Ok(added) if added > 0 => {
+                            let (_, total) = queue.get_counts();
+                            pb.finish_with_message(format!(
+                                "{}",
+                                style(format!("Cloned {} (+{} nested)", task.name, added)).green()
+                            ));
+                            // Update for new total
+                            debug!("Discovered {} more repos in {}, total now {}", added, task.name, total);
+                        }
+                        Ok(_) => {
+                            pb.finish_with_message(format!(
+                                "{}",
+                                style(format!("Cloned {}", task.name)).green()
+                            ));
+                        }
+                        Err(e) => {
+                            pb.finish_with_message(format!(
+                                "{}",
+                                style(format!("Cloned {} (meta parse error: {})", task.name, e)).yellow()
+                            ));
+                        }
+                    }
+                }
+                _ => {
+                    queue.mark_failed(task);
+                    pb.finish_with_message(format!(
+                        "{}",
+                        style(format!("Failed to clone {}", task.name)).red()
+                    ));
+                }
+            }
+        }
+        Err(_) => {
+            queue.mark_failed(task);
+            pb.finish_with_message(format!(
+                "{}",
+                style(format!("Failed to spawn git for {}", task.name)).red()
+            ));
+        }
+    }
+}
 
 // ============================================================================
 // Execution Plan types for plugin shim protocol
@@ -50,6 +394,17 @@ fn output_execution_plan(commands: Vec<PlannedCommand>, parallel: Option<bool>) 
 }
 
 /// Get all project directories from .meta config (including root ".")
+/// Get project directories - uses passed-in list if non-empty, otherwise reads local .meta
+fn get_project_directories_with_fallback(projects: &[String]) -> anyhow::Result<Vec<String>> {
+    if !projects.is_empty() {
+        // Use the projects list from meta_cli (supports --recursive)
+        Ok(projects.to_vec())
+    } else {
+        // Fall back to reading local .meta file
+        get_project_directories()
+    }
+}
+
 fn get_project_directories() -> anyhow::Result<Vec<String>> {
     let cwd = std::env::current_dir()?;
     let meta_path = cwd.join(".meta");
@@ -77,24 +432,23 @@ struct MetaConfig {
     projects: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone)]
-struct ProjectEntry {
-    name: String,
-    path: String,
-    repo: String,
-}
-
 /// Execute a git command for meta repositories
-pub fn execute_command(command: &str, args: &[String]) -> anyhow::Result<()> {
+///
+/// The `projects` parameter is the list of project directories passed from meta_cli.
+/// When meta_cli runs with `--recursive`, it discovers nested .meta files and passes
+/// all project directories here. If `projects` is empty, we fall back to reading
+/// the local .meta file via `get_project_directories()`.
+pub fn execute_command(command: &str, args: &[String], projects: &[String]) -> anyhow::Result<()> {
     debug!("[meta_git_cli] Plugin invoked with command: '{command}'");
     debug!("[meta_git_cli] Args: {args:?}");
+    debug!("[meta_git_cli] Projects from meta_cli: {projects:?}");
 
     match command {
-        "git status" => execute_git_status(),
+        "git status" => execute_git_status(projects),
         "git clone" => execute_git_clone(args),
-        "git update" => execute_git_update(),
+        "git update" => execute_git_update(projects),
         "git setup-ssh" => execute_git_setup_ssh(),
-        "git commit" => execute_git_commit(args),
+        "git commit" => execute_git_commit(args, projects),
         _ => Err(anyhow::anyhow!("Unknown command: {}", command)),
     }
 }
@@ -151,9 +505,10 @@ Examples:
 "#
 }
 
-fn execute_git_status() -> anyhow::Result<()> {
+fn execute_git_status(projects: &[String]) -> anyhow::Result<()> {
     // Return an execution plan - let loop_lib handle execution, dry-run, and JSON output
-    let dirs = get_project_directories()?;
+    // Use projects from meta_cli if available (enables --recursive), otherwise read local .meta
+    let dirs = get_project_directories_with_fallback(projects)?;
 
     let commands: Vec<PlannedCommand> = dirs
         .into_iter()
@@ -172,9 +527,10 @@ fn execute_git_clone(args: &[String]) -> anyhow::Result<()> {
     let dry_run = std::env::var("META_DRY_RUN").is_ok();
 
     // Default options - limit to 4 concurrent clones to avoid SSH multiplexing issues
-    let mut _recursive = false;
+    let mut recursive = false;
     let mut parallel = 4_usize;
     let mut depth: Option<String> = None;
+    let mut meta_depth: Option<usize> = None; // Limit recursion depth for nested .meta files
 
     let mut url = String::new();
     let mut dir_arg: Option<String> = None;
@@ -183,9 +539,17 @@ fn execute_git_clone(args: &[String]) -> anyhow::Result<()> {
 
     while idx < args.len() {
         match args[idx].as_str() {
-            "--recursive" => {
-                _recursive = true;
+            "--recursive" | "-r" => {
+                recursive = true;
                 idx += 1;
+            }
+            "--meta-depth" => {
+                if idx + 1 < args.len() {
+                    meta_depth = args[idx + 1].parse().ok();
+                    idx += 2;
+                } else {
+                    idx += 1;
+                }
             }
             "--parallel" => {
                 if idx + 1 < args.len() {
@@ -268,275 +632,174 @@ fn execute_git_clone(args: &[String]) -> anyhow::Result<()> {
     }
 
     // Parse .meta file inside cloned repo
-    let meta_path = Path::new(&clone_dir).join(".meta");
+    let clone_dir_path = PathBuf::from(&clone_dir);
+    let meta_path = clone_dir_path.join(".meta");
     if !meta_path.exists() {
         println!("No .meta file found in cloned repository");
         return Ok(());
     }
 
-    let meta_content = fs::read_to_string(meta_path)?;
-    let meta_config: MetaConfig = serde_json::from_str(&meta_content)?;
+    // Create the clone queue with depth settings
+    // For non-recursive mode, set meta_depth to 0 (only first level)
+    let effective_meta_depth = if recursive { meta_depth } else { Some(0) };
+    let queue = Arc::new(CloneQueue::new(depth.clone(), effective_meta_depth));
 
-    let project_vec: Vec<ProjectEntry> = meta_config
-        .projects
-        .into_iter()
-        .map(|(path, repo)| ProjectEntry {
-            name: path.clone(),
-            path,
-            repo,
-        })
-        .collect();
+    // Seed the queue with first-level children
+    let initial_count = queue.push_from_meta(&clone_dir_path, 0)?;
 
-    let projects = Arc::new(project_vec);
+    if initial_count == 0 {
+        println!("No child repositories to clone");
+        return Ok(());
+    }
 
     println!(
-        "Cloning {} child repositories with parallelism {}",
-        projects.len(),
-        parallel
-    );
-
-    let _pb = ProgressBar::new(projects.len() as u64);
-    _pb.set_style(
-        ProgressStyle::with_template(
-            "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}",
-        )
-        .unwrap()
-        .progress_chars("#>-"),
-    );
-
-    println!(
-        "{} 🔍  Resolving meta manifest...",
-        style("[1/4]").bold().dim()
-    );
-    println!(
-        "{} 🚚  Fetching meta repository...",
-        style("[2/4]").bold().dim()
-    );
-    println!(
-        "{} 🔗  Linking child repositories...",
-        style("[3/4]").bold().dim()
-    );
-    println!(
-        "{} 📃  Cloning child repositories...",
-        style("[4/4]").bold().dim()
+        "Cloning {} child repositories{}",
+        initial_count,
+        if recursive { " (recursive mode)" } else { "" }
     );
 
     let mp = MultiProgress::new();
 
-    let spinner_style = ProgressStyle::with_template("{prefix:.bold.dim} {spinner} {wide_msg}")
-        .unwrap()
-        .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ ");
+    // Use the queue-based cloning system
+    clone_with_queue(Arc::clone(&queue), parallel, &mp)?;
 
-    let progress_per_repo = Arc::new(
-        (0..projects.len())
-            .map(|_| AtomicUsize::new(0))
-            .collect::<Vec<_>>(),
-    );
+    let (completed, total) = queue.get_counts();
+    if total > initial_count {
+        println!(
+            "Meta-repo clone completed ({} repos cloned, {} discovered via nested .meta files)",
+            completed,
+            total - initial_count
+        );
+    } else {
+        println!("Meta-repo clone completed ({} repos cloned)", completed);
+    }
 
-    let total = projects.len();
-
-    // Pre-create all spinners in order (so they appear sequentially in terminal)
-    let spinners: Vec<ProgressBar> = projects
-        .iter()
-        .enumerate()
-        .map(|(i, proj)| {
-            let pb = mp.add(ProgressBar::new_spinner());
-            pb.set_style(spinner_style.clone());
-            pb.set_prefix(format!("[{}/{}]", i + 1, total));
-            pb.set_message(format!("{}: pending...", proj.name));
-            pb.enable_steady_tick(Duration::from_millis(100));
-            pb
-        })
-        .collect();
-
-    // Create a custom rayon thread pool with limited parallelism
-    // This prevents SSH multiplexing issues when cloning many repos
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(parallel)
-        .build()
-        .expect("Failed to create thread pool");
-
-    // Clone all projects in parallel using rayon (with limited parallelism)
-    pool.install(|| {
-        projects.par_iter().enumerate().for_each(|(i, proj)| {
-            let pb = &spinners[i];
-            pb.set_message(format!("Cloning {}", proj.name));
-            let target_path = Path::new(&clone_dir).join(&proj.path);
-
-            if target_path.exists()
-                && target_path
-                    .read_dir()
-                    .map(|mut iter| iter.next().is_some())
-                    .unwrap_or(false)
-            {
-                progress_per_repo[i].store(100, std::sync::atomic::Ordering::Relaxed);
-                pb.finish_with_message(format!(
-                    "{}",
-                    style(format!(
-                        "Skipped {} (directory exists and is not empty)",
-                        proj.name
-                    ))
-                    .yellow()
-                ));
-                return;
-            }
-
-            let mut cmd = Command::new("git");
-            cmd.arg("clone").arg(&proj.repo).arg(&target_path);
-            if let Some(ref d) = depth {
-                cmd.arg("--depth").arg(d);
-            }
-
-            fn parse_git_progress(line: &str) -> Option<usize> {
-                let patterns = [
-                    "Receiving objects:",
-                    "Counting objects:",
-                    "Compressing objects:",
-                ];
-                for pat in &patterns {
-                    if let Some(idx) = line.find(pat) {
-                        let rest = &line[idx + pat.len()..];
-                        if let Some(percent_idx) = rest.find('%') {
-                            let before_percent = &rest[..percent_idx];
-                            if let Some(num_start) = before_percent.rfind(' ') {
-                                let num_str = before_percent[num_start..].trim();
-                                if let Ok(pct) = num_str.parse::<usize>() {
-                                    return Some(pct.min(100));
-                                }
-                            }
-                        }
-                    }
-                }
-                None
-            }
-
-            match cmd
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .spawn()
-            {
-                Ok(mut child) => {
-                    let stdout = child.stdout.take().unwrap();
-                    let stderr = child.stderr.take().unwrap();
-
-                    let pb_clone = pb.clone();
-                    let proj_name = proj.name.clone();
-                    let progress_per_repo_clone = Arc::clone(&progress_per_repo);
-                    let idx_clone = i;
-                    std::thread::spawn(move || {
-                        use std::io::{BufRead, BufReader};
-                        let reader = BufReader::new(stdout);
-                        for line in reader.lines().map_while(Result::ok) {
-                            pb_clone.set_message(format!("{proj_name}: {line}"));
-                            if let Some(percent) = parse_git_progress(&line) {
-                                progress_per_repo_clone[idx_clone]
-                                    .store(percent, std::sync::atomic::Ordering::Relaxed);
-                            }
-                        }
-                    });
-
-                    let pb_clone2 = pb.clone();
-                    let proj_name2 = proj.name.clone();
-                    let progress_per_repo_clone2 = Arc::clone(&progress_per_repo);
-                    let idx_clone2 = i;
-                    std::thread::spawn(move || {
-                        use std::io::{BufRead, BufReader};
-                        let reader = BufReader::new(stderr);
-                        for line in reader.lines().map_while(Result::ok) {
-                            pb_clone2.set_message(format!("{proj_name2}: {line}"));
-                            if let Some(percent) = parse_git_progress(&line) {
-                                progress_per_repo_clone2[idx_clone2]
-                                    .store(percent, std::sync::atomic::Ordering::Relaxed);
-                            }
-                        }
-                    });
-
-                    let status = child.wait();
-                    match status {
-                        Ok(s) if s.success() => {
-                            progress_per_repo[i].store(100, std::sync::atomic::Ordering::Relaxed);
-                            pb.finish_with_message(format!(
-                                "{}",
-                                style(format!("Cloned {}", proj.name)).green()
-                            ));
-                        }
-                        Ok(_) | Err(_) => {
-                            progress_per_repo[i].store(100, std::sync::atomic::Ordering::Relaxed);
-                            pb.finish_with_message(format!(
-                                "{}",
-                                style(format!("Failed to clone {}", proj.name)).red()
-                            ));
-                        }
-                    }
-                }
-                Err(_) => {
-                    pb.finish_with_message(format!(
-                        "{}",
-                        style(format!("Failed to spawn git for {}", proj.name)).red()
-                    ));
-                }
-            }
-        });
-    }); // pool.install ends here
-
-    println!("Meta-repo clone completed");
     Ok(())
 }
 
-fn execute_git_update() -> anyhow::Result<()> {
-    // Load meta config
+fn execute_git_update(projects: &[String]) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
-    let meta_path = cwd.join(".meta");
-    if !meta_path.exists() {
-        eprintln!("No .meta file found in {}", cwd.display());
-        return Ok(());
-    }
-    let meta_content = std::fs::read_to_string(&meta_path)?;
-    let meta_config: MetaConfig = serde_json::from_str(&meta_content)?;
 
-    let mut commands: Vec<PlannedCommand> = Vec::new();
+    // Check for dry-run mode
+    let dry_run = std::env::var("META_DRY_RUN").is_ok();
 
-    // Clone missing repositories
-    for (name, url) in &meta_config.projects {
-        let repo_path = cwd.join(name);
-        if !repo_path.exists() {
-            // Parent directory for git clone
-            let parent_dir = cwd.to_string_lossy().to_string();
-            commands.push(PlannedCommand {
-                dir: parent_dir,
-                cmd: format!("git clone {} {}", url, name),
-            });
+    // Determine if we're in recursive mode (projects list provided by meta_cli)
+    let recursive = !projects.is_empty();
+
+    // Build list of directories to check for .meta files
+    let dirs_to_check: Vec<PathBuf> = if recursive {
+        // In recursive mode, check each directory that has a .meta file
+        projects
+            .iter()
+            .map(|p| {
+                if p == "." {
+                    cwd.clone()
+                } else {
+                    cwd.join(p)
+                }
+            })
+            .filter(|path| path.join(".meta").exists())
+            .collect()
+    } else {
+        // Normal mode - just check current directory
+        vec![cwd.clone()]
+    };
+
+    // First pass: check for orphaned repos and warn user
+    for dir in &dirs_to_check {
+        let meta_path = dir.join(".meta");
+        if !meta_path.exists() {
+            continue;
         }
-    }
 
-    // Check for orphaned repositories (exist locally but not in .meta)
-    let config_projects: std::collections::HashSet<_> = meta_config.projects.keys().collect();
-    if let Ok(entries) = std::fs::read_dir(&cwd) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                // Check if it's a git repo and not in config
-                if path.join(".git").exists() && !name.starts_with('.') && !config_projects.contains(&name.to_string()) {
-                    eprintln!(
-                        "{} {} exists locally but is not in .meta. To remove: rm -rf {}",
-                        style("⚠").yellow(),
-                        style(name).yellow().bold(),
-                        name
-                    );
+        let meta_content = match std::fs::read_to_string(&meta_path) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+
+        let meta_config: MetaConfig = match serde_json::from_str(&meta_content) {
+            Ok(config) => config,
+            Err(_) => continue,
+        };
+
+        // Check for orphaned repositories (exist locally but not in .meta)
+        let config_projects: HashSet<_> = meta_config.projects.keys().collect();
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    // Check if it's a git repo and not in config
+                    if path.join(".git").exists()
+                        && !name.starts_with('.')
+                        && !config_projects.contains(&name.to_string())
+                    {
+                        let relative_path = if dir == &cwd {
+                            name.to_string()
+                        } else {
+                            dir.join(name).to_string_lossy().to_string()
+                        };
+                        eprintln!(
+                            "{} {} exists locally but is not in .meta. To remove: rm -rf {}",
+                            style("⚠").yellow(),
+                            style(&relative_path).yellow().bold(),
+                            relative_path
+                        );
+                    }
                 }
             }
         }
     }
 
-    if commands.is_empty() {
-        eprintln!("All repositories are already cloned.");
+    // Create the clone queue - unlimited depth for recursive mode
+    let meta_depth = if recursive { None } else { Some(0) };
+    let queue = Arc::new(CloneQueue::new(None, meta_depth)); // No git depth for update
+
+    // Seed the queue from all known .meta files
+    for dir in &dirs_to_check {
+        // Determine relative depth based on whether it's the cwd or nested
+        let depth_level = if dir == &cwd { 0 } else { 1 };
+        queue.push_from_meta(dir, depth_level)?;
+    }
+
+    let (_, initial_count) = queue.get_counts();
+
+    if initial_count == 0 {
+        println!("All repositories are already cloned.");
         return Ok(());
     }
 
-    // Return execution plan for cloning missing repos
-    // Sequential to avoid issues with parallel clones to same SSH host
-    output_execution_plan(commands, Some(false));
+    if dry_run {
+        println!("{} Would clone {} missing repositories:", style("[DRY RUN]").cyan(), initial_count);
+        let tasks = queue.drain_all();
+        for task in tasks {
+            println!("  git clone {} {}", task.url, task.target_path.display());
+        }
+        return Ok(());
+    }
+
+    println!(
+        "Cloning {} missing repositories{}",
+        initial_count,
+        if recursive { " (recursive mode)" } else { "" }
+    );
+
+    let mp = MultiProgress::new();
+
+    // Use the queue-based cloning system (with parallelism of 4 to avoid SSH issues)
+    clone_with_queue(Arc::clone(&queue), 4, &mp)?;
+
+    let (completed, total) = queue.get_counts();
+    if total > initial_count {
+        println!(
+            "Update completed ({} repos cloned, {} discovered via nested .meta files)",
+            completed,
+            total - initial_count
+        );
+    } else {
+        println!("Update completed ({} repos cloned)", completed);
+    }
+
     Ok(())
 }
 
@@ -572,7 +835,7 @@ fn execute_git_setup_ssh() -> anyhow::Result<()> {
 }
 
 /// Execute git commit with optional --edit flag for per-repo messages
-fn execute_git_commit(args: &[String]) -> anyhow::Result<()> {
+fn execute_git_commit(args: &[String], projects: &[String]) -> anyhow::Result<()> {
     // Parse arguments
     let mut use_editor = false;
     let mut message: Option<String> = None;
@@ -597,33 +860,42 @@ fn execute_git_commit(args: &[String]) -> anyhow::Result<()> {
         }
     }
 
-    // Load meta config
     let cwd = std::env::current_dir()?;
-    let meta_path = cwd.join(".meta");
-    if !meta_path.exists() {
-        println!("No .meta file found in {}", cwd.display());
-        return Ok(());
-    }
-    let meta_content = std::fs::read_to_string(&meta_path)?;
-    let meta_config: MetaConfig = serde_json::from_str(&meta_content)?;
+
+    // Get list of directories to check for staged changes
+    let dirs_to_check: Vec<String> = if !projects.is_empty() {
+        // Use projects from meta_cli (supports --recursive)
+        projects.to_vec()
+    } else {
+        // Fall back to reading local .meta file
+        let meta_path = cwd.join(".meta");
+        if !meta_path.exists() {
+            println!("No .meta file found in {}", cwd.display());
+            return Ok(());
+        }
+        let meta_content = std::fs::read_to_string(&meta_path)?;
+        let meta_config: MetaConfig = serde_json::from_str(&meta_content)?;
+
+        let mut dirs = vec![".".to_string()];
+        dirs.extend(meta_config.projects.keys().cloned());
+        dirs
+    };
 
     // Find repos with staged changes
     let mut repos_with_changes: Vec<(String, String, Vec<String>)> = Vec::new();
 
-    // Check root repo
-    if has_staged_changes(".") {
-        let staged = get_staged_files(".");
-        repos_with_changes.push((".".to_string(), ".".to_string(), staged));
-    }
+    for dir in &dirs_to_check {
+        let path = if dir == "." {
+            cwd.clone()
+        } else {
+            cwd.join(dir)
+        };
 
-    // Check child repos
-    for name in meta_config.projects.keys() {
-        let repo_path = cwd.join(name);
-        if repo_path.exists() && has_staged_changes(&repo_path.to_string_lossy()) {
-            let staged = get_staged_files(&repo_path.to_string_lossy());
+        if path.exists() && has_staged_changes(&path.to_string_lossy()) {
+            let staged = get_staged_files(&path.to_string_lossy());
             repos_with_changes.push((
-                name.clone(),
-                repo_path.to_string_lossy().to_string(),
+                dir.clone(),
+                path.to_string_lossy().to_string(),
                 staged,
             ));
         }
@@ -872,7 +1144,7 @@ mod tests {
         // Change to temp directory that has no .meta file
         std::env::set_current_dir(temp_dir.path()).unwrap();
 
-        let result = execute_command("git status", &[]);
+        let result = execute_command("git status", &[], &[]);
 
         // Restore original directory
         std::env::set_current_dir(original_dir).unwrap();
@@ -891,21 +1163,8 @@ mod tests {
     }
 
     #[test]
-    fn test_project_entry_clone() {
-        let entry = ProjectEntry {
-            name: "test".to_string(),
-            path: "/path/to/test".to_string(),
-            repo: "git@github.com:org/test.git".to_string(),
-        };
-        let cloned = entry.clone();
-        assert_eq!(cloned.name, entry.name);
-        assert_eq!(cloned.path, entry.path);
-        assert_eq!(cloned.repo, entry.repo);
-    }
-
-    #[test]
     fn test_unknown_command() {
-        let result = execute_command("git unknown", &[]);
+        let result = execute_command("git unknown", &[], &[]);
         assert!(result.is_err());
     }
 
