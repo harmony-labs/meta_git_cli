@@ -85,6 +85,26 @@ fn main() -> Result<()> {
                 "commit".to_string(),
                 "Commit changes with per-repo messages".to_string(),
             );
+            help_commands.insert(
+                "snapshot create".to_string(),
+                "Create a snapshot of all repos' git state".to_string(),
+            );
+            help_commands.insert(
+                "snapshot list".to_string(),
+                "List all available snapshots".to_string(),
+            );
+            help_commands.insert(
+                "snapshot show".to_string(),
+                "Show details of a snapshot".to_string(),
+            );
+            help_commands.insert(
+                "snapshot restore".to_string(),
+                "Restore all repos to a snapshot state".to_string(),
+            );
+            help_commands.insert(
+                "snapshot delete".to_string(),
+                "Delete a snapshot".to_string(),
+            );
 
             let info = PluginInfo {
                 name: "git".to_string(),
@@ -95,6 +115,12 @@ fn main() -> Result<()> {
                     "git update".to_string(),
                     "git setup-ssh".to_string(),
                     "git commit".to_string(),
+                    "git snapshot".to_string(),
+                    "git snapshot create".to_string(),
+                    "git snapshot list".to_string(),
+                    "git snapshot show".to_string(),
+                    "git snapshot restore".to_string(),
+                    "git snapshot delete".to_string(),
                 ],
                 description: Some("Git operations for meta repositories".to_string()),
                 help: Some(PluginHelp {
@@ -106,6 +132,8 @@ fn main() -> Result<()> {
                         "meta git update".to_string(),
                         "meta git commit --edit".to_string(),
                         "meta git commit -m \"Update all repos\"".to_string(),
+                        "meta git snapshot create before-upgrade".to_string(),
+                        "meta git snapshot restore before-upgrade".to_string(),
                     ],
                     note: Some(
                         "To run raw git commands across repos: meta exec -- git <command>"
