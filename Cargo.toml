@@ -1,7 +1,10 @@
 [package]
 name = "meta_git_cli"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Git plugin for meta CLI"
 
 [[bin]]
 name = "meta-git"

@@ -184,6 +184,7 @@ impl CloneQueue {
         let mut failed = self.failed.lock().unwrap();
         failed.insert(task.target_path.clone());
     }
+
 }
 
 /// Clone repositories using a worker pool where each worker continuously pulls from the queue
