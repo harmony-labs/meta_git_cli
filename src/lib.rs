@@ -8,9 +8,9 @@ use dialoguer::Confirm;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use log::debug;
 use meta_git_lib::snapshot::{self, RepoState, Snapshot};
-use serde::{Deserialize, Serialize};
+use meta_cli::config;
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -105,12 +105,11 @@ impl CloneQueue {
             return Ok(0);
         }
 
-        let meta_content = fs::read_to_string(&meta_path)?;
-        let meta_config: MetaConfig = serde_json::from_str(&meta_content)?;
+        let (projects, _) = config::parse_meta_config(&meta_path)?;
 
         let mut added = 0;
-        for (name, url) in meta_config.projects {
-            let target_path = base_dir.join(&name);
+        for project in projects {
+            let target_path = base_dir.join(&project.path);
 
             // Skip if already exists
             if target_path.exists() {
@@ -124,8 +123,8 @@ impl CloneQueue {
             }
 
             let task = CloneTask {
-                name,
-                url,
+                name: project.name,
+                url: project.repo,
                 target_path,
                 depth_level,
             };
@@ -411,29 +410,15 @@ fn get_project_directories_with_fallback(projects: &[String]) -> anyhow::Result<
 
 fn get_project_directories() -> anyhow::Result<Vec<String>> {
     let cwd = std::env::current_dir()?;
-    let meta_path = cwd.join(".meta");
-
-    if !meta_path.exists() {
-        return Ok(vec![".".to_string()]);
-    }
-
-    let meta_content = std::fs::read_to_string(&meta_path)?;
-    let meta_config: MetaConfig = serde_json::from_str(&meta_content)?;
-
-    // Start with root directory
+    let tree = match config::walk_meta_tree(&cwd, Some(0)) {
+        Ok(t) => t,
+        Err(_) => return Ok(vec![".".to_string()]),
+    };
     let mut dirs = vec![".".to_string()];
-
-    // Add child projects (sorted for consistency)
-    let mut projects: Vec<String> = meta_config.projects.keys().cloned().collect();
-    projects.sort();
-    dirs.extend(projects);
-
+    let mut paths: Vec<String> = tree.iter().map(|n| n.info.path.clone()).collect();
+    paths.sort();
+    dirs.extend(paths);
     Ok(dirs)
-}
-
-#[derive(Debug, Deserialize)]
-struct MetaConfig {
-    projects: HashMap<String, String>,
 }
 
 /// Execute a git command for meta repositories
@@ -745,18 +730,13 @@ fn execute_git_update(projects: &[String]) -> anyhow::Result<()> {
             continue;
         }
 
-        let meta_content = match std::fs::read_to_string(&meta_path) {
-            Ok(content) => content,
-            Err(_) => continue,
-        };
-
-        let meta_config: MetaConfig = match serde_json::from_str(&meta_content) {
-            Ok(config) => config,
+        let (projects, _) = match config::parse_meta_config(&meta_path) {
+            Ok(result) => result,
             Err(_) => continue,
         };
 
         // Check for orphaned repositories (exist locally but not in .meta)
-        let config_projects: HashSet<_> = meta_config.projects.keys().collect();
+        let config_projects: HashSet<String> = projects.iter().map(|p| p.path.clone()).collect();
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -906,11 +886,10 @@ fn execute_git_commit(args: &[String], projects: &[String]) -> anyhow::Result<()
             println!("No .meta file found in {}", cwd.display());
             return Ok(());
         }
-        let meta_content = std::fs::read_to_string(&meta_path)?;
-        let meta_config: MetaConfig = serde_json::from_str(&meta_content)?;
+        let (projects, _) = config::parse_meta_config(&meta_path)?;
 
         let mut dirs = vec![".".to_string()];
-        dirs.extend(meta_config.projects.keys().cloned());
+        dirs.extend(projects.iter().map(|p| p.path.clone()));
         dirs
     };
 
@@ -1546,49 +1525,17 @@ fn execute_snapshot_delete(args: &[String]) -> anyhow::Result<()> {
 /// Get all repository directories for snapshot operations (recursive by default)
 fn get_all_repo_directories(projects: &[String]) -> anyhow::Result<Vec<String>> {
     if !projects.is_empty() {
-        // Use projects from meta_cli (supports --recursive which is already the default behavior)
         return Ok(projects.to_vec());
     }
 
-    // Fall back to reading local .meta file and discovering nested repos
     let cwd = std::env::current_dir()?;
+    let tree = match config::walk_meta_tree(&cwd, None) {
+        Ok(t) => t,
+        Err(_) => return Ok(vec![".".to_string()]),
+    };
     let mut dirs = vec![".".to_string()];
-
-    // Recursively discover all repos
-    discover_repos_recursive(&cwd, &cwd, &mut dirs)?;
-
+    dirs.extend(config::flatten_meta_tree(&tree));
     Ok(dirs)
-}
-
-/// Recursively discover repos by looking for .meta files
-fn discover_repos_recursive(
-    base: &Path,
-    current: &Path,
-    dirs: &mut Vec<String>,
-) -> anyhow::Result<()> {
-    let meta_path = current.join(".meta");
-    if !meta_path.exists() {
-        return Ok(());
-    }
-
-    let meta_content = std::fs::read_to_string(&meta_path)?;
-    let meta_config: MetaConfig = serde_json::from_str(&meta_content)?;
-
-    for name in meta_config.projects.keys() {
-        let project_path = current.join(name);
-        let relative_path = project_path
-            .strip_prefix(base)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| name.clone());
-
-        if project_path.exists() {
-            dirs.push(relative_path);
-            // Check for nested .meta
-            discover_repos_recursive(base, &project_path, dirs)?;
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1615,11 +1562,18 @@ mod tests {
 
     #[test]
     fn test_meta_config_parsing() {
-        let json = r#"{"projects": {"foo": "git@github.com:org/foo.git", "bar": "git@github.com:org/bar.git"}}"#;
-        let config: MetaConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(config.projects.len(), 2);
-        assert!(config.projects.contains_key("foo"));
-        assert!(config.projects.contains_key("bar"));
+        let dir = tempfile::tempdir().unwrap();
+        let meta_path = dir.path().join(".meta");
+        std::fs::write(
+            &meta_path,
+            r#"{"projects": {"foo": "git@github.com:org/foo.git", "bar": "git@github.com:org/bar.git"}}"#,
+        )
+        .unwrap();
+        let (projects, _) = config::parse_meta_config(&meta_path).unwrap();
+        assert_eq!(projects.len(), 2);
+        let names: HashSet<_> = projects.iter().map(|p| p.name.as_str()).collect();
+        assert!(names.contains("foo"));
+        assert!(names.contains("bar"));
     }
 
     #[test]
