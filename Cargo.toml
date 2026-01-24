@@ -15,6 +15,7 @@ name = "meta_git_cli"
 path = "src/lib.rs"
 
 [dependencies]
+meta_plugin_protocol = { path = "../meta_plugin_protocol" }
 meta_git_lib = { path = "../meta_git_lib" }
 meta_cli = { path = "../meta_cli", package = "meta" }
 loop_lib = { path = "../loop_lib" }
