@@ -12,7 +12,9 @@ mod status;
 mod update;
 
 use log::debug;
-use meta_plugin_protocol::CommandResult;
+use meta_plugin_protocol::{CommandResult, PlannedCommand};
+
+use helpers::get_project_directories_with_fallback;
 
 /// Execute a git command for meta repositories
 ///
@@ -37,13 +39,41 @@ pub fn execute_command(command: &str, args: &[String], projects: &[String]) -> C
         "git snapshot show" => snapshot::execute_snapshot_show(args),
         "git snapshot restore" => snapshot::execute_snapshot_restore(args, projects),
         "git snapshot delete" => snapshot::execute_snapshot_delete(args),
-        _ => return CommandResult::Error(format!("Unknown command: {}", command)),
+        // Fallback: run raw git command across all repos
+        _ => return execute_raw_git_command(command, args, projects),
     };
 
     match result {
         Ok(cmd_result) => cmd_result,
         Err(e) => CommandResult::Error(format!("{e}")),
     }
+}
+
+/// Execute a raw git command across all repos (fallback for unrecognized subcommands)
+fn execute_raw_git_command(command: &str, args: &[String], projects: &[String]) -> CommandResult {
+    // Get project directories
+    let dirs = match get_project_directories_with_fallback(projects) {
+        Ok(d) => d,
+        Err(e) => return CommandResult::Error(format!("Failed to get project directories: {e}")),
+    };
+
+    // Build the full git command string
+    // command is e.g. "git add ." and args contains any additional arguments
+    let full_cmd = if args.is_empty() {
+        command.to_string()
+    } else {
+        format!("{} {}", command, args.join(" "))
+    };
+
+    let commands: Vec<PlannedCommand> = dirs
+        .into_iter()
+        .map(|dir| PlannedCommand {
+            dir,
+            cmd: full_cmd.clone(),
+        })
+        .collect();
+
+    CommandResult::Plan(commands, Some(false)) // Sequential for readable output
 }
 
 /// Get help text for the plugin
@@ -163,9 +193,11 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_command() {
+    fn test_unknown_command_falls_through_to_raw_git() {
+        // Unknown git subcommands should fall through to raw git execution
         let result = execute_command("git unknown", &[], &[]);
-        assert!(matches!(result, CommandResult::Error(_)));
+        // Should return a Plan (to run `git unknown` in all repos), not ShowHelp
+        assert!(matches!(result, CommandResult::Plan(_, _)));
     }
 
     #[test]
