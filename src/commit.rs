@@ -89,6 +89,7 @@ pub(crate) fn execute_git_commit(args: &[String], projects: &[String], cwd: &std
                 PlannedCommand {
                     dir,
                     cmd: format!("git commit -m '{}'", escaped_msg),
+                    env: None,
                 }
             })
             .collect();
