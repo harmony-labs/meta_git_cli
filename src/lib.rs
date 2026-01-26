@@ -28,6 +28,11 @@ pub fn execute_command(command: &str, args: &[String], projects: &[String], dry_
     debug!("[meta_git_cli] Args: {args:?}");
     debug!("[meta_git_cli] Projects from meta_cli: {projects:?}");
 
+    // Intercept --help/-h before dispatching to subcommand handlers
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        return CommandResult::ShowHelp(None);
+    }
+
     let result = match command {
         "git status" => status::execute_git_status(projects, cwd),
         "git clone" => clone::execute_git_clone(args, dry_run, cwd),
