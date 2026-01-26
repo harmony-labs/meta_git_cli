@@ -59,7 +59,7 @@ impl CloneQueue {
 
         // Check if already completed
         {
-            let completed = self.completed.lock().unwrap();
+            let completed = self.completed.lock().unwrap_or_else(|e| e.into_inner());
             if completed.contains(&path) {
                 return false;
             }
@@ -67,7 +67,7 @@ impl CloneQueue {
 
         // Add to pending
         {
-            let mut pending = self.pending.lock().unwrap();
+            let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
             // Check if already in pending
             if pending.iter().any(|t| t.target_path == path) {
                 return false;
@@ -127,19 +127,19 @@ impl CloneQueue {
 
     /// Take a single task from the queue (for worker threads)
     fn take_one(&self) -> Option<CloneTask> {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         pending.pop()
     }
 
     /// Check if queue is finished (no pending and no active workers)
     fn is_finished(&self, active_workers: &AtomicUsize) -> bool {
-        let pending = self.pending.lock().unwrap();
+        let pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         pending.is_empty() && active_workers.load(Ordering::SeqCst) == 0
     }
 
     /// Drain all pending tasks (for dry-run display)
     pub fn drain_all(&self) -> Vec<CloneTask> {
-        let mut pending = self.pending.lock().unwrap();
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
         pending.drain(..).collect()
     }
 
@@ -156,7 +156,7 @@ impl CloneQueue {
         self.total_completed.fetch_add(1, Ordering::SeqCst);
 
         {
-            let mut completed = self.completed.lock().unwrap();
+            let mut completed = self.completed.lock().unwrap_or_else(|e| e.into_inner());
             completed.insert(task.target_path.clone());
         }
 
@@ -168,7 +168,7 @@ impl CloneQueue {
     fn mark_failed(&self, task: &CloneTask) {
         self.total_completed.fetch_add(1, Ordering::SeqCst);
 
-        let mut failed = self.failed.lock().unwrap();
+        let mut failed = self.failed.lock().unwrap_or_else(|e| e.into_inner());
         failed.insert(task.target_path.clone());
     }
 
@@ -226,7 +226,7 @@ pub(crate) fn clone_with_queue(
 
                             // Signal that we're done (might enable termination check)
                             let (lock, cvar) = &*signal;
-                            let mut done = lock.lock().unwrap();
+                            let mut done = lock.lock().unwrap_or_else(|e| e.into_inner());
                             *done = true;
                             cvar.notify_all();
                         }
@@ -238,7 +238,7 @@ pub(crate) fn clone_with_queue(
 
                             // Wait for signal that work might be available
                             let (lock, cvar) = &*signal;
-                            let done = lock.lock().unwrap();
+                            let done = lock.lock().unwrap_or_else(|e| e.into_inner());
                             // Wait with timeout to periodically recheck
                             let _ = cvar.wait_timeout(done, Duration::from_millis(50));
                         }
