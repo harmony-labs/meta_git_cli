@@ -13,6 +13,7 @@ mod update;
 
 use log::debug;
 use meta_plugin_protocol::{CommandResult, PlannedCommand};
+use std::path::Path;
 
 use helpers::get_project_directories_with_fallback;
 
@@ -22,25 +23,25 @@ use helpers::get_project_directories_with_fallback;
 /// When meta_cli runs with `--recursive`, it discovers nested .meta files and passes
 /// all project directories here. If `projects` is empty, we fall back to reading
 /// the local .meta file via `get_project_directories()`.
-pub fn execute_command(command: &str, args: &[String], projects: &[String], dry_run: bool) -> CommandResult {
+pub fn execute_command(command: &str, args: &[String], projects: &[String], dry_run: bool, cwd: &Path) -> CommandResult {
     debug!("[meta_git_cli] Plugin invoked with command: '{command}'");
     debug!("[meta_git_cli] Args: {args:?}");
     debug!("[meta_git_cli] Projects from meta_cli: {projects:?}");
 
     let result = match command {
-        "git status" => status::execute_git_status(projects),
-        "git clone" => clone::execute_git_clone(args, dry_run),
-        "git update" => update::execute_git_update(projects, dry_run),
-        "git setup-ssh" => ssh::execute_git_setup_ssh(),
-        "git commit" => commit::execute_git_commit(args, projects),
+        "git status" => status::execute_git_status(projects, cwd),
+        "git clone" => clone::execute_git_clone(args, dry_run, cwd),
+        "git update" => update::execute_git_update(projects, dry_run, cwd),
+        "git setup-ssh" => ssh::execute_git_setup_ssh(cwd),
+        "git commit" => commit::execute_git_commit(args, projects, cwd),
         "git snapshot" => snapshot::execute_snapshot_help(),
-        "git snapshot create" => snapshot::execute_snapshot_create(args, projects),
-        "git snapshot list" => snapshot::execute_snapshot_list(),
-        "git snapshot show" => snapshot::execute_snapshot_show(args),
-        "git snapshot restore" => snapshot::execute_snapshot_restore(args, projects, dry_run),
-        "git snapshot delete" => snapshot::execute_snapshot_delete(args),
+        "git snapshot create" => snapshot::execute_snapshot_create(args, projects, cwd),
+        "git snapshot list" => snapshot::execute_snapshot_list(cwd),
+        "git snapshot show" => snapshot::execute_snapshot_show(args, cwd),
+        "git snapshot restore" => snapshot::execute_snapshot_restore(args, projects, dry_run, cwd),
+        "git snapshot delete" => snapshot::execute_snapshot_delete(args, cwd),
         // Fallback: run raw git command across all repos
-        _ => return execute_raw_git_command(command, args, projects),
+        _ => return execute_raw_git_command(command, args, projects, cwd),
     };
 
     match result {
@@ -50,9 +51,9 @@ pub fn execute_command(command: &str, args: &[String], projects: &[String], dry_
 }
 
 /// Execute a raw git command across all repos (fallback for unrecognized subcommands)
-fn execute_raw_git_command(command: &str, args: &[String], projects: &[String]) -> CommandResult {
+fn execute_raw_git_command(command: &str, args: &[String], projects: &[String], cwd: &Path) -> CommandResult {
     // Get project directories
-    let dirs = match get_project_directories_with_fallback(projects) {
+    let dirs = match get_project_directories_with_fallback(projects, cwd) {
         Ok(d) => d,
         Err(e) => return CommandResult::Error(format!("Failed to get project directories: {e}")),
     };
@@ -162,15 +163,8 @@ mod tests {
     #[test]
     fn test_execute_git_status_no_meta_file() {
         let temp_dir = TempDir::new().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
 
-        // Change to temp directory that has no .meta file
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-
-        let result = execute_command("git status", &[], &[], false);
-
-        // Restore original directory
-        std::env::set_current_dir(original_dir).unwrap();
+        let result = execute_command("git status", &[], &[], false, temp_dir.path());
 
         // Should succeed (returns a Plan, not an Error)
         assert!(!matches!(result, CommandResult::Error(_)));
@@ -195,7 +189,7 @@ mod tests {
     #[test]
     fn test_unknown_command_falls_through_to_raw_git() {
         // Unknown git subcommands should fall through to raw git execution
-        let result = execute_command("git unknown", &[], &[], false);
+        let result = execute_command("git unknown", &[], &[], false, Path::new("."));
         // Should return a Plan (to run `git unknown` in all repos), not ShowHelp
         assert!(matches!(result, CommandResult::Plan(_, _)));
     }
@@ -528,13 +522,8 @@ the only commit message
     #[test]
     fn test_get_project_directories_no_meta_file() {
         let temp_dir = TempDir::new().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
 
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-
-        let dirs = get_project_directories().unwrap();
-
-        std::env::set_current_dir(original_dir).unwrap();
+        let dirs = get_project_directories(temp_dir.path()).unwrap();
 
         // Should return just "." when no .meta file
         assert_eq!(dirs, vec!["."]);
@@ -543,17 +532,12 @@ the only commit message
     #[test]
     fn test_get_project_directories_with_meta_file() {
         let temp_dir = TempDir::new().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
 
         // Create .meta file
         let meta_content = r#"{"projects": {"alpha": "url1", "beta": "url2", "gamma": "url3"}}"#;
         std::fs::write(temp_dir.path().join(".meta"), meta_content).unwrap();
 
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-
-        let dirs = get_project_directories().unwrap();
-
-        std::env::set_current_dir(original_dir).unwrap();
+        let dirs = get_project_directories(temp_dir.path()).unwrap();
 
         // Should return "." plus sorted project names
         assert_eq!(dirs.len(), 4);
@@ -566,17 +550,12 @@ the only commit message
     #[test]
     fn test_get_project_directories_sorted() {
         let temp_dir = TempDir::new().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
 
         // Create .meta file with unsorted projects
         let meta_content = r#"{"projects": {"zebra": "url1", "alpha": "url2", "middle": "url3"}}"#;
         std::fs::write(temp_dir.path().join(".meta"), meta_content).unwrap();
 
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-
-        let dirs = get_project_directories().unwrap();
-
-        std::env::set_current_dir(original_dir).unwrap();
+        let dirs = get_project_directories(temp_dir.path()).unwrap();
 
         // Projects should be sorted alphabetically
         assert_eq!(dirs[1], "alpha");
@@ -587,17 +566,12 @@ the only commit message
     #[test]
     fn test_get_project_directories_empty_projects() {
         let temp_dir = TempDir::new().unwrap();
-        let original_dir = std::env::current_dir().unwrap();
 
         // Create .meta file with no projects
         let meta_content = r#"{"projects": {}}"#;
         std::fs::write(temp_dir.path().join(".meta"), meta_content).unwrap();
 
-        std::env::set_current_dir(temp_dir.path()).unwrap();
-
-        let dirs = get_project_directories().unwrap();
-
-        std::env::set_current_dir(original_dir).unwrap();
+        let dirs = get_project_directories(temp_dir.path()).unwrap();
 
         // Should return just "."
         assert_eq!(dirs, vec!["."]);

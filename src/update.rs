@@ -8,8 +8,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub(crate) fn execute_git_update(projects: &[String], dry_run: bool) -> anyhow::Result<CommandResult> {
-    let cwd = std::env::current_dir()?;
+pub(crate) fn execute_git_update(projects: &[String], dry_run: bool, cwd: &std::path::Path) -> anyhow::Result<CommandResult> {
 
     // Determine if we're in recursive mode (projects list provided by meta_cli)
     let recursive = !projects.is_empty();
@@ -21,7 +20,7 @@ pub(crate) fn execute_git_update(projects: &[String], dry_run: bool) -> anyhow::
             .iter()
             .map(|p| {
                 if p == "." {
-                    cwd.clone()
+                    cwd.to_path_buf()
                 } else {
                     cwd.join(p)
                 }
@@ -30,7 +29,7 @@ pub(crate) fn execute_git_update(projects: &[String], dry_run: bool) -> anyhow::
             .collect()
     } else {
         // Normal mode - just check current directory
-        vec![cwd.clone()]
+        vec![cwd.to_path_buf()]
     };
 
     // First pass: check for orphaned repos and warn user
@@ -57,7 +56,7 @@ pub(crate) fn execute_git_update(projects: &[String], dry_run: bool) -> anyhow::
                         && !name.starts_with('.')
                         && !config_projects.contains(&name.to_string())
                     {
-                        let relative_path = if dir == &cwd {
+                        let relative_path = if dir.as_path() == cwd {
                             name.to_string()
                         } else {
                             dir.join(name).to_string_lossy().to_string()
@@ -81,7 +80,7 @@ pub(crate) fn execute_git_update(projects: &[String], dry_run: bool) -> anyhow::
     // Seed the queue from all known .meta files
     for dir in &dirs_to_check {
         // Determine relative depth based on whether it's the cwd or nested
-        let depth_level = if dir == &cwd { 0 } else { 1 };
+        let depth_level = if dir.as_path() == cwd { 0 } else { 1 };
         queue.push_from_meta(dir, depth_level)?;
     }
 

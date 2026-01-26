@@ -4,6 +4,7 @@ use meta_plugin_protocol::{
     CommandResult, PluginDefinition, PluginHelp, PluginInfo, PluginRequest, run_plugin,
 };
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 fn main() {
     let mut help_commands = HashMap::new();
@@ -88,16 +89,20 @@ fn main() {
 }
 
 fn execute(request: PluginRequest) -> CommandResult {
-    if !request.cwd.is_empty() {
-        if let Err(e) = std::env::set_current_dir(&request.cwd) {
-            return CommandResult::Error(format!("Failed to set working directory: {e}"));
+    let cwd = if request.cwd.is_empty() {
+        match std::env::current_dir() {
+            Ok(d) => d,
+            Err(e) => return CommandResult::Error(format!("Failed to get working directory: {e}")),
         }
-    }
+    } else {
+        PathBuf::from(&request.cwd)
+    };
 
     meta_git_cli::execute_command(
         &request.command,
         &request.args,
         &request.projects,
         request.options.dry_run,
+        &cwd,
     )
 }

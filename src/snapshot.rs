@@ -6,6 +6,7 @@ use meta_git_lib::snapshot::{self, RepoState, Snapshot};
 use meta_plugin_protocol::CommandResult;
 use rayon::prelude::*;
 use std::collections::HashMap;
+use std::path::Path;
 
 /// Show snapshot help text
 pub(crate) fn execute_snapshot_help() -> anyhow::Result<CommandResult> {
@@ -45,17 +46,15 @@ Use --force to skip confirmation on restore, --dry-run to preview."#,
 }
 
 /// Create a snapshot of the current workspace state
-pub(crate) fn execute_snapshot_create(args: &[String], projects: &[String]) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_snapshot_create(args: &[String], projects: &[String], cwd: &Path) -> anyhow::Result<CommandResult> {
     // Parse snapshot name from args
     let name = args
         .iter()
         .find(|a| !a.starts_with('-'))
         .ok_or_else(|| anyhow::anyhow!("Usage: meta git snapshot create <name>"))?;
 
-    let cwd = std::env::current_dir()?;
-
     // Get all repos (recursive by default)
-    let dirs = get_all_repo_directories(projects)?;
+    let dirs = get_all_repo_directories(projects, cwd)?;
 
     println!(
         "Creating snapshot '{}' of {} repos...",
@@ -68,7 +67,7 @@ pub(crate) fn execute_snapshot_create(args: &[String], projects: &[String]) -> a
         .par_iter()
         .map(|dir| {
             let path = if dir == "." {
-                cwd.clone()
+                cwd.to_path_buf()
             } else {
                 cwd.join(dir)
             };
@@ -153,9 +152,8 @@ pub(crate) fn execute_snapshot_create(args: &[String], projects: &[String]) -> a
 }
 
 /// List all snapshots
-pub(crate) fn execute_snapshot_list() -> anyhow::Result<CommandResult> {
-    let cwd = std::env::current_dir()?;
-    let snapshots = snapshot::list_snapshots(&cwd)?;
+pub(crate) fn execute_snapshot_list(cwd: &Path) -> anyhow::Result<CommandResult> {
+    let snapshots = snapshot::list_snapshots(cwd)?;
 
     if snapshots.is_empty() {
         println!("No snapshots found.");
@@ -187,14 +185,13 @@ pub(crate) fn execute_snapshot_list() -> anyhow::Result<CommandResult> {
 }
 
 /// Show details of a snapshot
-pub(crate) fn execute_snapshot_show(args: &[String]) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_snapshot_show(args: &[String], cwd: &Path) -> anyhow::Result<CommandResult> {
     let name = args
         .iter()
         .find(|a| !a.starts_with('-'))
         .ok_or_else(|| anyhow::anyhow!("Usage: meta git snapshot show <name>"))?;
 
-    let cwd = std::env::current_dir()?;
-    let snap = snapshot::load_snapshot(&cwd, name)?;
+    let snap = snapshot::load_snapshot(cwd, name)?;
 
     println!("Snapshot: {}", style(&snap.name).cyan().bold());
     println!("Created:  {}", snap.created.format("%Y-%m-%d %H:%M:%S UTC"));
@@ -231,7 +228,7 @@ pub(crate) fn execute_snapshot_show(args: &[String]) -> anyhow::Result<CommandRe
 }
 
 /// Restore workspace to a snapshot state
-pub(crate) fn execute_snapshot_restore(args: &[String], _projects: &[String], dry_run: bool) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_snapshot_restore(args: &[String], _projects: &[String], dry_run: bool, cwd: &Path) -> anyhow::Result<CommandResult> {
     // Parse args
     let mut name: Option<&str> = None;
     let mut force = false;
@@ -248,8 +245,7 @@ pub(crate) fn execute_snapshot_restore(args: &[String], _projects: &[String], dr
 
     let name = name.ok_or_else(|| anyhow::anyhow!("Usage: meta git snapshot restore <name> [--force] [--dry-run]"))?;
 
-    let cwd = std::env::current_dir()?;
-    let snap = snapshot::load_snapshot(&cwd, name)?;
+    let snap = snapshot::load_snapshot(cwd, name)?;
 
     // Analyze what would change
     let mut repos_to_restore: Vec<(&str, &RepoState, bool)> = Vec::new();
@@ -257,7 +253,7 @@ pub(crate) fn execute_snapshot_restore(args: &[String], _projects: &[String], dr
 
     for (repo_name, state) in &snap.repos {
         let path = if repo_name == "." {
-            cwd.clone()
+            cwd.to_path_buf()
         } else {
             cwd.join(repo_name)
         };
@@ -324,7 +320,7 @@ pub(crate) fn execute_snapshot_restore(args: &[String], _projects: &[String], dr
 
     for (repo_name, state, _is_dirty) in &repos_to_restore {
         let path = if *repo_name == "." {
-            cwd.clone()
+            cwd.to_path_buf()
         } else {
             cwd.join(repo_name)
         };
@@ -375,15 +371,13 @@ pub(crate) fn execute_snapshot_restore(args: &[String], _projects: &[String], dr
 }
 
 /// Delete a snapshot
-pub(crate) fn execute_snapshot_delete(args: &[String]) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_snapshot_delete(args: &[String], cwd: &Path) -> anyhow::Result<CommandResult> {
     let name = args
         .iter()
         .find(|a| !a.starts_with('-'))
         .ok_or_else(|| anyhow::anyhow!("Usage: meta git snapshot delete <name>"))?;
 
-    let cwd = std::env::current_dir()?;
-
-    snapshot::delete_snapshot(&cwd, name)?;
+    snapshot::delete_snapshot(cwd, name)?;
 
     println!(
         "{} Deleted snapshot '{}'",

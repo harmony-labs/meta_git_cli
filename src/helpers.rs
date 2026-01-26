@@ -1,19 +1,19 @@
 use meta_cli::config;
+use std::path::Path;
 
 /// Get project directories - uses passed-in list if non-empty, otherwise reads local .meta
-pub(crate) fn get_project_directories_with_fallback(projects: &[String]) -> anyhow::Result<Vec<String>> {
+pub(crate) fn get_project_directories_with_fallback(projects: &[String], cwd: &Path) -> anyhow::Result<Vec<String>> {
     if !projects.is_empty() {
         // Use the projects list from meta_cli (supports --recursive)
         Ok(projects.to_vec())
     } else {
         // Fall back to reading local .meta file
-        get_project_directories()
+        get_project_directories(cwd)
     }
 }
 
-pub(crate) fn get_project_directories() -> anyhow::Result<Vec<String>> {
-    let cwd = std::env::current_dir()?;
-    let tree = match config::walk_meta_tree(&cwd, Some(0)) {
+pub(crate) fn get_project_directories(cwd: &Path) -> anyhow::Result<Vec<String>> {
+    let tree = match config::walk_meta_tree(cwd, Some(0)) {
         Ok(t) => t,
         Err(_) => return Ok(vec![".".to_string()]),
     };
@@ -25,13 +25,12 @@ pub(crate) fn get_project_directories() -> anyhow::Result<Vec<String>> {
 }
 
 /// Get all repository directories for snapshot operations (recursive by default)
-pub(crate) fn get_all_repo_directories(projects: &[String]) -> anyhow::Result<Vec<String>> {
+pub(crate) fn get_all_repo_directories(projects: &[String], cwd: &Path) -> anyhow::Result<Vec<String>> {
     if !projects.is_empty() {
         return Ok(projects.to_vec());
     }
 
-    let cwd = std::env::current_dir()?;
-    let tree = match config::walk_meta_tree(&cwd, None) {
+    let tree = match config::walk_meta_tree(cwd, None) {
         Ok(t) => t,
         Err(_) => return Ok(vec![".".to_string()]),
     };

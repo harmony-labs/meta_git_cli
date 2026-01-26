@@ -3,11 +3,10 @@ use crate::clone_queue::clone_with_queue;
 use console::style;
 use indicatif::MultiProgress;
 use meta_plugin_protocol::CommandResult;
-use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
-pub(crate) fn execute_git_clone(args: &[String], dry_run: bool) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_git_clone(args: &[String], dry_run: bool, cwd: &std::path::Path) -> anyhow::Result<CommandResult> {
 
     // Default options - limit to 4 concurrent clones to avoid SSH multiplexing issues
     let mut recursive = false;
@@ -107,13 +106,14 @@ pub(crate) fn execute_git_clone(args: &[String], dry_run: bool) -> anyhow::Resul
     if let Some(ref dir) = dir_arg {
         clone_cmd.arg(dir);
     }
+    clone_cmd.current_dir(cwd);
     let status = clone_cmd.status()?;
     if !status.success() {
         return Ok(CommandResult::Error("Failed to clone meta repository".to_string()));
     }
 
     // Parse .meta file inside cloned repo
-    let clone_dir_path = PathBuf::from(&clone_dir);
+    let clone_dir_path = cwd.join(&clone_dir);
     let meta_path = clone_dir_path.join(".meta");
     if !meta_path.exists() {
         return Ok(CommandResult::Message("No .meta file found in cloned repository".to_string()));

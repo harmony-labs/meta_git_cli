@@ -4,7 +4,7 @@ use meta_plugin_protocol::{CommandResult, PlannedCommand};
 use std::process::Command;
 
 /// Execute git commit with optional --edit flag for per-repo messages
-pub(crate) fn execute_git_commit(args: &[String], projects: &[String]) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_git_commit(args: &[String], projects: &[String], cwd: &std::path::Path) -> anyhow::Result<CommandResult> {
     // Parse arguments
     let mut use_editor = false;
     let mut message: Option<String> = None;
@@ -29,8 +29,6 @@ pub(crate) fn execute_git_commit(args: &[String], projects: &[String]) -> anyhow
         }
     }
 
-    let cwd = std::env::current_dir()?;
-
     // Get list of directories to check for staged changes
     let dirs_to_check: Vec<String> = if !projects.is_empty() {
         // Use projects from meta_cli (supports --recursive)
@@ -53,7 +51,7 @@ pub(crate) fn execute_git_commit(args: &[String], projects: &[String]) -> anyhow
 
     for dir in &dirs_to_check {
         let path = if dir == "." {
-            cwd.clone()
+            cwd.to_path_buf()
         } else {
             cwd.join(dir)
         };

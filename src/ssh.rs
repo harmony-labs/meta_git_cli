@@ -1,9 +1,10 @@
 use console::style;
 use meta_plugin_protocol::CommandResult;
 use std::collections::BTreeSet;
+use std::path::Path;
 
-pub(crate) fn execute_git_setup_ssh() -> anyhow::Result<CommandResult> {
-    let hosts = discover_ssh_hosts();
+pub(crate) fn execute_git_setup_ssh(cwd: &Path) -> anyhow::Result<CommandResult> {
+    let hosts = discover_ssh_hosts(cwd);
     let host_refs: Vec<&str> = hosts.iter().map(|s| s.as_str()).collect();
 
     if meta_git_lib::is_multiplexing_configured(&host_refs) {
@@ -36,13 +37,8 @@ pub(crate) fn execute_git_setup_ssh() -> anyhow::Result<CommandResult> {
 
 /// Discover unique SSH hosts from the .meta config in the current directory.
 /// Falls back to ["github.com"] if no .meta config is found or no SSH URLs exist.
-fn discover_ssh_hosts() -> Vec<String> {
-    let cwd = match std::env::current_dir() {
-        Ok(d) => d,
-        Err(_) => return vec!["github.com".to_string()],
-    };
-
-    let Some((config_path, _format)) = meta_cli::config::find_meta_config(&cwd, None) else {
+fn discover_ssh_hosts(cwd: &Path) -> Vec<String> {
+    let Some((config_path, _format)) = meta_cli::config::find_meta_config(cwd, None) else {
         return vec!["github.com".to_string()];
     };
 
