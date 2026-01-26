@@ -13,6 +13,7 @@ mod update;
 
 use log::debug;
 use meta_plugin_protocol::{CommandResult, PlannedCommand};
+use std::collections::HashMap;
 use std::path::Path;
 
 use helpers::get_project_directories_with_fallback;
@@ -71,11 +72,15 @@ fn execute_raw_git_command(command: &str, args: &[String], projects: &[String], 
         format!("{} {}", command, args.join(" "))
     };
 
+    // Disable pager for git commands run across repos to prevent blocking
+    let git_env = Some(HashMap::from([("GIT_PAGER".to_string(), "cat".to_string())]));
+
     let commands: Vec<PlannedCommand> = dirs
         .into_iter()
         .map(|dir| PlannedCommand {
             dir,
             cmd: full_cmd.clone(),
+            env: git_env.clone(),
         })
         .collect();
 
@@ -371,10 +376,12 @@ the only commit message
                 PlannedCommand {
                     dir: "./repo1".to_string(),
                     cmd: "git status".to_string(),
+                    env: None,
                 },
                 PlannedCommand {
                     dir: "./repo2".to_string(),
                     cmd: "git status".to_string(),
+                    env: None,
                 },
             ],
             parallel: Some(false),
@@ -392,6 +399,7 @@ the only commit message
             commands: vec![PlannedCommand {
                 dir: ".".to_string(),
                 cmd: "ls".to_string(),
+                env: None,
             }],
             parallel: None,
         };
@@ -406,6 +414,7 @@ the only commit message
         let cmd = PlannedCommand {
             dir: "/absolute/path".to_string(),
             cmd: "git pull --rebase".to_string(),
+            env: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
@@ -420,6 +429,7 @@ the only commit message
                 commands: vec![PlannedCommand {
                     dir: "project".to_string(),
                     cmd: "make build".to_string(),
+                    env: None,
                 }],
                 parallel: Some(true),
             },
@@ -442,10 +452,12 @@ the only commit message
                     PlannedCommand {
                         dir: "a".to_string(),
                         cmd: "cmd1".to_string(),
+                        env: None,
                     },
                     PlannedCommand {
                         dir: "b".to_string(),
                         cmd: "cmd2".to_string(),
+                        env: None,
                     },
                 ],
                 parallel: Some(false),
@@ -482,6 +494,7 @@ the only commit message
         let cmd = PlannedCommand {
             dir: "./path with spaces".to_string(),
             cmd: "git commit -m \"feat: add feature\"".to_string(),
+            env: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
@@ -495,6 +508,7 @@ the only commit message
         let cmd = PlannedCommand {
             dir: "/home/user/workspace".to_string(),
             cmd: "git clone git@github.com:org/repo.git my-repo".to_string(),
+            env: None,
         };
 
         let json = serde_json::to_string(&cmd).unwrap();
@@ -508,6 +522,7 @@ the only commit message
             .map(|i| PlannedCommand {
                 dir: format!("./repo_{}", i),
                 cmd: "git status".to_string(),
+                env: None,
             })
             .collect();
 
@@ -595,6 +610,7 @@ the only commit message
             .map(|dir| PlannedCommand {
                 dir,
                 cmd: "git status".to_string(),
+                env: None,
             })
             .collect();
 
@@ -628,6 +644,7 @@ the only commit message
             .map(|(name, url)| PlannedCommand {
                 dir: cwd.to_string(),
                 cmd: format!("git clone {} {}", url, name),
+                env: None,
             })
             .collect();
 
