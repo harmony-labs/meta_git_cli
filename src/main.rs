@@ -88,19 +88,16 @@ fn main() {
 }
 
 fn execute(request: PluginRequest) -> CommandResult {
-    // Set environment variables based on options
-    if request.options.json_output {
-        std::env::set_var("META_JSON_OUTPUT", "1");
-    }
-    if request.options.dry_run {
-        std::env::set_var("META_DRY_RUN", "1");
-    }
-
     if !request.cwd.is_empty() {
         if let Err(e) = std::env::set_current_dir(&request.cwd) {
             return CommandResult::Error(format!("Failed to set working directory: {e}"));
         }
     }
 
-    meta_git_cli::execute_command(&request.command, &request.args, &request.projects)
+    meta_git_cli::execute_command(
+        &request.command,
+        &request.args,
+        &request.projects,
+        request.options.dry_run,
+    )
 }

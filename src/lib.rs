@@ -22,22 +22,22 @@ use helpers::get_project_directories_with_fallback;
 /// When meta_cli runs with `--recursive`, it discovers nested .meta files and passes
 /// all project directories here. If `projects` is empty, we fall back to reading
 /// the local .meta file via `get_project_directories()`.
-pub fn execute_command(command: &str, args: &[String], projects: &[String]) -> CommandResult {
+pub fn execute_command(command: &str, args: &[String], projects: &[String], dry_run: bool) -> CommandResult {
     debug!("[meta_git_cli] Plugin invoked with command: '{command}'");
     debug!("[meta_git_cli] Args: {args:?}");
     debug!("[meta_git_cli] Projects from meta_cli: {projects:?}");
 
     let result = match command {
         "git status" => status::execute_git_status(projects),
-        "git clone" => clone::execute_git_clone(args),
-        "git update" => update::execute_git_update(projects),
+        "git clone" => clone::execute_git_clone(args, dry_run),
+        "git update" => update::execute_git_update(projects, dry_run),
         "git setup-ssh" => ssh::execute_git_setup_ssh(),
         "git commit" => commit::execute_git_commit(args, projects),
         "git snapshot" => snapshot::execute_snapshot_help(),
         "git snapshot create" => snapshot::execute_snapshot_create(args, projects),
         "git snapshot list" => snapshot::execute_snapshot_list(),
         "git snapshot show" => snapshot::execute_snapshot_show(args),
-        "git snapshot restore" => snapshot::execute_snapshot_restore(args, projects),
+        "git snapshot restore" => snapshot::execute_snapshot_restore(args, projects, dry_run),
         "git snapshot delete" => snapshot::execute_snapshot_delete(args),
         // Fallback: run raw git command across all repos
         _ => return execute_raw_git_command(command, args, projects),
@@ -167,7 +167,7 @@ mod tests {
         // Change to temp directory that has no .meta file
         std::env::set_current_dir(temp_dir.path()).unwrap();
 
-        let result = execute_command("git status", &[], &[]);
+        let result = execute_command("git status", &[], &[], false);
 
         // Restore original directory
         std::env::set_current_dir(original_dir).unwrap();
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn test_unknown_command_falls_through_to_raw_git() {
         // Unknown git subcommands should fall through to raw git execution
-        let result = execute_command("git unknown", &[], &[]);
+        let result = execute_command("git unknown", &[], &[], false);
         // Should return a Plan (to run `git unknown` in all repos), not ShowHelp
         assert!(matches!(result, CommandResult::Plan(_, _)));
     }

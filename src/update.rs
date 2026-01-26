@@ -8,11 +8,8 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub(crate) fn execute_git_update(projects: &[String]) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_git_update(projects: &[String], dry_run: bool) -> anyhow::Result<CommandResult> {
     let cwd = std::env::current_dir()?;
-
-    // Check for dry-run mode
-    let dry_run = std::env::var("META_DRY_RUN").is_ok();
 
     // Determine if we're in recursive mode (projects list provided by meta_cli)
     let recursive = !projects.is_empty();

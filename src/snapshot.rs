@@ -231,11 +231,11 @@ pub(crate) fn execute_snapshot_show(args: &[String]) -> anyhow::Result<CommandRe
 }
 
 /// Restore workspace to a snapshot state
-pub(crate) fn execute_snapshot_restore(args: &[String], _projects: &[String]) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_snapshot_restore(args: &[String], _projects: &[String], dry_run: bool) -> anyhow::Result<CommandResult> {
     // Parse args
     let mut name: Option<&str> = None;
     let mut force = false;
-    let mut dry_run = std::env::var("META_DRY_RUN").is_ok();
+    let mut dry_run = dry_run;
 
     for arg in args {
         match arg.as_str() {

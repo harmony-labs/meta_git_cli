@@ -7,9 +7,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 
-pub(crate) fn execute_git_clone(args: &[String]) -> anyhow::Result<CommandResult> {
-    // Check for dry-run mode
-    let dry_run = std::env::var("META_DRY_RUN").is_ok();
+pub(crate) fn execute_git_clone(args: &[String], dry_run: bool) -> anyhow::Result<CommandResult> {
 
     // Default options - limit to 4 concurrent clones to avoid SSH multiplexing issues
     let mut recursive = false;
