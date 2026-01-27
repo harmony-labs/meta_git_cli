@@ -11,40 +11,61 @@ mod ssh;
 mod status;
 mod update;
 
+mod commands;
+
 use log::debug;
-use meta_plugin_protocol::{CommandResult, PlannedCommand};
+use meta_plugin_protocol::{CommandResult, PlannedCommand, PluginRequestOptions};
 use std::collections::HashMap;
 use std::path::Path;
 
 use helpers::get_project_directories_with_fallback;
 
-/// Execute a git command for meta repositories
+/// Execute a command for meta repositories.
 ///
 /// The `projects` parameter is the list of project directories passed from meta_cli.
 /// When meta_cli runs with `--recursive`, it discovers nested .meta files and passes
 /// all project directories here. If `projects` is empty, we fall back to reading
 /// the local .meta file via `get_project_directories()`.
-pub fn execute_command(command: &str, args: &[String], projects: &[String], dry_run: bool, cwd: &Path) -> CommandResult {
+pub fn execute_command(
+    command: &str,
+    args: &[String],
+    projects: &[String],
+    options: &PluginRequestOptions,
+    cwd: &Path,
+) -> CommandResult {
     debug!("[meta_git_cli] Plugin invoked with command: '{command}'");
     debug!("[meta_git_cli] Args: {args:?}");
     debug!("[meta_git_cli] Projects from meta_cli: {projects:?}");
 
-    // Intercept --help/-h before dispatching to subcommand handlers
+    // Worktree commands (meta worktree * and meta git worktree *)
+    // Checked before --help intercept so worktree subcommands can handle their own --help via clap
+    if command.starts_with("worktree") || command.starts_with("git worktree") {
+        return commands::worktree::execute_worktree_command(
+            command,
+            args,
+            options.verbose,
+            options.json_output,
+        );
+    }
+
+    // Intercept --help/-h before dispatching to git subcommand handlers
     if args.iter().any(|a| a == "--help" || a == "-h") {
         return CommandResult::ShowHelp(None);
     }
 
     let result = match command {
         "git status" => status::execute_git_status(projects, cwd),
-        "git clone" => clone::execute_git_clone(args, dry_run, cwd),
-        "git update" => update::execute_git_update(projects, dry_run, cwd),
+        "git clone" => clone::execute_git_clone(args, options.dry_run, cwd),
+        "git update" => update::execute_git_update(projects, options.dry_run, cwd),
         "git setup-ssh" => ssh::execute_git_setup_ssh(cwd),
         "git commit" => commit::execute_git_commit(args, projects, cwd),
         "git snapshot" => snapshot::execute_snapshot_help(),
         "git snapshot create" => snapshot::execute_snapshot_create(args, projects, cwd),
         "git snapshot list" => snapshot::execute_snapshot_list(cwd),
         "git snapshot show" => snapshot::execute_snapshot_show(args, cwd),
-        "git snapshot restore" => snapshot::execute_snapshot_restore(args, projects, dry_run, cwd),
+        "git snapshot restore" => {
+            snapshot::execute_snapshot_restore(args, projects, options.dry_run, cwd)
+        }
         "git snapshot delete" => snapshot::execute_snapshot_delete(args, cwd),
         // Fallback: run raw git command across all repos
         _ => return execute_raw_git_command(command, args, projects, cwd),
@@ -173,8 +194,9 @@ mod tests {
     #[test]
     fn test_execute_git_status_no_meta_file() {
         let temp_dir = TempDir::new().unwrap();
+        let options = PluginRequestOptions::default();
 
-        let result = execute_command("git status", &[], &[], false, temp_dir.path());
+        let result = execute_command("git status", &[], &[], &options, temp_dir.path());
 
         // Should succeed (returns a Plan, not an Error)
         assert!(!matches!(result, CommandResult::Error(_)));
@@ -199,7 +221,8 @@ mod tests {
     #[test]
     fn test_unknown_command_falls_through_to_raw_git() {
         // Unknown git subcommands should fall through to raw git execution
-        let result = execute_command("git unknown", &[], &[], false, Path::new("."));
+        let options = PluginRequestOptions::default();
+        let result = execute_command("git unknown", &[], &[], &options, Path::new("."));
         // Should return a Plan (to run `git unknown` in all repos), not ShowHelp
         assert!(matches!(result, CommandResult::Plan(_, _)));
     }

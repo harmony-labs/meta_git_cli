@@ -6,7 +6,36 @@ use meta_plugin_protocol::{
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Simple stderr logger that outputs colored warnings/errors.
+/// Stdout is reserved for the plugin JSON protocol.
+struct StderrLogger;
+
+impl log::Log for StderrLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Info
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        use colored::Colorize;
+        let prefix = match record.level() {
+            log::Level::Error => "error:".red().bold().to_string(),
+            log::Level::Warn => "warning:".yellow().bold().to_string(),
+            log::Level::Info => "notice:".cyan().to_string(),
+            _ => return,
+        };
+        eprintln!("{prefix} {}", record.args());
+    }
+
+    fn flush(&self) {}
+}
+
+static LOGGER: StderrLogger = StderrLogger;
+
 fn main() {
+    let _ = log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Info));
     let mut help_commands = HashMap::new();
     help_commands.insert(
         "clone".to_string(),
@@ -48,6 +77,38 @@ fn main() {
         "snapshot delete".to_string(),
         "Delete a snapshot".to_string(),
     );
+    help_commands.insert(
+        "worktree create".to_string(),
+        "Create a new worktree set".to_string(),
+    );
+    help_commands.insert(
+        "worktree add".to_string(),
+        "Add a repo to an existing worktree set".to_string(),
+    );
+    help_commands.insert(
+        "worktree destroy".to_string(),
+        "Remove a worktree set".to_string(),
+    );
+    help_commands.insert(
+        "worktree list".to_string(),
+        "List all worktree sets".to_string(),
+    );
+    help_commands.insert(
+        "worktree status".to_string(),
+        "Show status of a worktree set".to_string(),
+    );
+    help_commands.insert(
+        "worktree diff".to_string(),
+        "Show cross-repo diff vs base branch".to_string(),
+    );
+    help_commands.insert(
+        "worktree exec".to_string(),
+        "Run a command across worktree repos".to_string(),
+    );
+    help_commands.insert(
+        "worktree prune".to_string(),
+        "Remove expired/orphaned worktrees".to_string(),
+    );
 
     run_plugin(PluginDefinition {
         info: PluginInfo {
@@ -65,6 +126,24 @@ fn main() {
                 "git snapshot show".to_string(),
                 "git snapshot restore".to_string(),
                 "git snapshot delete".to_string(),
+                "worktree".to_string(),
+                "worktree create".to_string(),
+                "worktree add".to_string(),
+                "worktree destroy".to_string(),
+                "worktree list".to_string(),
+                "worktree status".to_string(),
+                "worktree diff".to_string(),
+                "worktree exec".to_string(),
+                "worktree prune".to_string(),
+                "git worktree".to_string(),
+                "git worktree create".to_string(),
+                "git worktree add".to_string(),
+                "git worktree destroy".to_string(),
+                "git worktree list".to_string(),
+                "git worktree status".to_string(),
+                "git worktree diff".to_string(),
+                "git worktree exec".to_string(),
+                "git worktree prune".to_string(),
             ],
             description: Some("Git operations for meta repositories".to_string()),
             help: Some(PluginHelp {
@@ -78,6 +157,10 @@ fn main() {
                     "meta git commit -m \"Update all repos\"".to_string(),
                     "meta git snapshot create before-upgrade".to_string(),
                     "meta git snapshot restore before-upgrade".to_string(),
+                    "meta worktree create my-task --repo api --repo web".to_string(),
+                    "meta worktree list".to_string(),
+                    "meta worktree exec my-task -- cargo test".to_string(),
+                    "meta worktree destroy my-task".to_string(),
                 ],
                 note: Some(
                     "To run raw git commands across repos: meta exec -- git <command>".to_string(),
@@ -102,7 +185,7 @@ fn execute(request: PluginRequest) -> CommandResult {
         &request.command,
         &request.args,
         &request.projects,
-        request.options.dry_run,
+        &request.options,
         &cwd,
     )
 }
