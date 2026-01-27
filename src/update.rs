@@ -25,7 +25,7 @@ pub(crate) fn execute_git_update(projects: &[String], dry_run: bool, cwd: &std::
                     cwd.join(p)
                 }
             })
-            .filter(|path| path.join(".meta").exists())
+            .filter(|path| config::find_meta_config_in(path).is_some())
             .collect()
     } else {
         // Normal mode - just check current directory
@@ -34,10 +34,9 @@ pub(crate) fn execute_git_update(projects: &[String], dry_run: bool, cwd: &std::
 
     // First pass: check for orphaned repos and warn user
     for dir in &dirs_to_check {
-        let meta_path = dir.join(".meta");
-        if !meta_path.exists() {
+        let Some((meta_path, _format)) = config::find_meta_config_in(dir) else {
             continue;
-        }
+        };
 
         let (projects, _) = match config::parse_meta_config(&meta_path) {
             Ok(result) => result,

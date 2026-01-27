@@ -2,6 +2,7 @@ use crate::clone_queue::CloneQueue;
 use crate::clone_queue::clone_with_queue;
 use console::style;
 use indicatif::MultiProgress;
+use meta_cli::config;
 use meta_plugin_protocol::CommandResult;
 use std::process::Command;
 use std::sync::Arc;
@@ -112,11 +113,10 @@ pub(crate) fn execute_git_clone(args: &[String], dry_run: bool, cwd: &std::path:
         return Ok(CommandResult::Error("Failed to clone meta repository".to_string()));
     }
 
-    // Parse .meta file inside cloned repo
+    // Parse meta config inside cloned repo
     let clone_dir_path = cwd.join(&clone_dir);
-    let meta_path = clone_dir_path.join(".meta");
-    if !meta_path.exists() {
-        return Ok(CommandResult::Message("No .meta file found in cloned repository".to_string()));
+    if config::find_meta_config_in(&clone_dir_path).is_none() {
+        return Ok(CommandResult::Message("No .meta config found in cloned repository".to_string()));
     }
 
     // Create the clone queue with depth settings

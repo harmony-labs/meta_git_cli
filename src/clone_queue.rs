@@ -88,10 +88,9 @@ impl CloneQueue {
             }
         }
 
-        let meta_path = base_dir.join(".meta");
-        if !meta_path.exists() {
+        let Some((meta_path, _format)) = config::find_meta_config_in(base_dir) else {
             return Ok(0);
-        }
+        };
 
         let (projects, _) = config::parse_meta_config(&meta_path)?;
 
@@ -101,10 +100,9 @@ impl CloneQueue {
 
             // Skip if already exists
             if target_path.exists() {
-                // But still check if it has a .meta file for nested discovery
-                let nested_meta = target_path.join(".meta");
-                if nested_meta.exists() {
-                    // Queue it for .meta discovery even though it's already cloned
+                // But still check if it has a config file for nested discovery
+                if config::find_meta_config_in(&target_path).is_some() {
+                    // Queue it for discovery even though it's already cloned
                     added += self.push_from_meta(&target_path, depth_level + 1)?;
                 }
                 continue;

@@ -34,11 +34,10 @@ pub(crate) fn execute_git_commit(args: &[String], projects: &[String], cwd: &std
         // Use projects from meta_cli (supports --recursive)
         projects.to_vec()
     } else {
-        // Fall back to reading local .meta file
-        let meta_path = cwd.join(".meta");
-        if !meta_path.exists() {
-            return Ok(CommandResult::Message(format!("No .meta file found in {}", cwd.display())));
-        }
+        // Fall back to reading local meta config
+        let Some((meta_path, _format)) = config::find_meta_config_in(cwd) else {
+            return Ok(CommandResult::Message(format!("No .meta config found in {}", cwd.display())));
+        };
         let (projects, _) = config::parse_meta_config(&meta_path)?;
 
         let mut dirs = vec![".".to_string()];
