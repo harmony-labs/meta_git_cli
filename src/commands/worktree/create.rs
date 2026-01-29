@@ -13,6 +13,10 @@ use meta_git_lib::worktree::types::{
 
 use super::cli_types::CreateArgs;
 
+// TODO: Add BATS integration tests for --strict mode behavior:
+// - Test that --strict converts warnings to errors when --from-ref skips repos
+// - Test that without --strict, warnings are issued but execution continues
+// - Test error message format in strict mode
 pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool) -> Result<()> {
     let name = &args.name;
     validate_worktree_name(name)?;
