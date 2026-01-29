@@ -64,6 +64,10 @@ pub struct CreateArgs {
     /// Store custom metadata (key=value)
     #[arg(long = "meta", value_name = "KEY=VALUE")]
     pub custom_meta: Vec<String>,
+
+    /// Error (instead of warn) when --from-ref skips repos
+    #[arg(long)]
+    pub strict: bool,
 }
 
 #[derive(Args)]

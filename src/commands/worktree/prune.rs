@@ -42,10 +42,47 @@ pub(crate) fn handle_prune(args: PruneArgs, _verbose: bool, json: bool) -> Resul
             to_remove.push(PruneEntry {
                 name: entry.name.clone(),
                 path: path_key.clone(),
-                reason: "orphaned".to_string(),
+                reason: "orphaned (missing directory)".to_string(),
                 age_seconds: None,
             });
             continue;
+        }
+
+        // Check if source project directory still exists
+        let project_path = Path::new(&entry.project);
+        if !project_path.exists() {
+            to_remove.push(PruneEntry {
+                name: entry.name.clone(),
+                path: path_key.clone(),
+                reason: "orphaned (source project missing)".to_string(),
+                age_seconds: None,
+            });
+            continue;
+        }
+
+        // Check if source repos still exist in project
+        // Load meta config to check if repos are still defined
+        if let Some((meta_path, _format)) = meta_cli::config::find_meta_config_in(project_path) {
+            if let Ok((projects, _)) = meta_cli::config::parse_meta_config(&meta_path) {
+                let mut missing_repos = Vec::new();
+                for store_repo in &entry.repos {
+                    // Check if this repo alias still exists in the project's .meta config
+                    if !projects.iter().any(|p| p.name == store_repo.alias) {
+                        missing_repos.push(store_repo.alias.clone());
+                    }
+                }
+
+                // If all repos are missing, consider it orphaned
+                if !missing_repos.is_empty() && missing_repos.len() == entry.repos.len() {
+                    to_remove.push(PruneEntry {
+                        name: entry.name.clone(),
+                        path: path_key.clone(),
+                        reason: "orphaned (all source repos removed from project)".to_string(),
+                        age_seconds: None,
+                    });
+                    continue;
+                }
+            }
         }
 
         // Check TTL expiration

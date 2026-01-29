@@ -40,6 +40,7 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool) -> Resu
         .collect();
     let from_ref = args.from_ref.as_deref();
     let from_pr_spec = args.from_pr.as_deref();
+    let strict = args.strict;
 
     // Check mutual exclusion of --from-ref and --from-pr
     if from_ref.is_some() && from_pr_spec.is_some() {
@@ -203,13 +204,22 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool) -> Resu
             }
             Err(e) if from_ref.is_some() => {
                 // --from-ref: skip repos where ref doesn't exist
-                eprintln!(
-                    "{} Skipping '{}': {}",
-                    "warning:".yellow().bold(),
-                    alias,
-                    e
-                );
-                continue;
+                if strict {
+                    // --strict: error instead of warning
+                    anyhow::bail!(
+                        "Repo '{}' skipped due to missing ref (strict mode enabled): {}",
+                        alias,
+                        e
+                    );
+                } else {
+                    eprintln!(
+                        "{} Skipping '{}': {}",
+                        "warning:".yellow().bold(),
+                        alias,
+                        e
+                    );
+                    continue;
+                }
             }
             Err(e) => return Err(e),
         }
