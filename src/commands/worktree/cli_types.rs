@@ -65,7 +65,12 @@ pub struct CreateArgs {
     #[arg(long = "meta", value_name = "KEY=VALUE")]
     pub custom_meta: Vec<String>,
 
-    /// Error (instead of warn) when --from-ref skips repos
+    /// Fail if --from-ref doesn't exist in all repos (errors instead of warnings)
+    ///
+    /// When using --from-ref to start worktrees from a specific tag/SHA/branch,
+    /// repos that don't have that ref are normally skipped with a warning.
+    /// With --strict, missing refs cause the entire operation to fail instead.
+    /// Useful in CI/automation where you want all-or-nothing behavior.
     #[arg(long)]
     pub strict: bool,
 }
