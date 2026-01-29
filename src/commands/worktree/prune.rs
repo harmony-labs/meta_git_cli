@@ -12,6 +12,54 @@ use meta_git_lib::worktree::types::*;
 
 use super::cli_types::PruneArgs;
 
+/// Helper to create a PruneEntry with consistent structure.
+fn create_prune_entry(
+    name: String,
+    path: String,
+    reason: impl Into<String>,
+    age_seconds: Option<u64>,
+) -> PruneEntry {
+    PruneEntry {
+        name,
+        path,
+        reason: reason.into(),
+        age_seconds,
+    }
+}
+
+/// Check if a worktree entry is orphaned due to missing source repos.
+/// Uses a config cache to avoid redundant file I/O when multiple worktrees
+/// share the same source project.
+fn check_repo_orphaned(
+    entry: &WorktreeStoreEntry,
+    config_cache: &mut std::collections::HashMap<String, Option<Vec<meta_cli::config::ProjectInfo>>>,
+) -> Option<String> {
+    let config = config_cache.entry(entry.project.clone()).or_insert_with(|| {
+        let project_path = Path::new(&entry.project);
+        meta_cli::config::find_meta_config_in(project_path).and_then(|(meta_path, _)| {
+            meta_cli::config::parse_meta_config(&meta_path)
+                .ok()
+                .map(|(projects, _)| projects)
+        })
+    });
+
+    let Some(projects) = config else {
+        return None; // Can't check without config
+    };
+
+    let missing_count = entry
+        .repos
+        .iter()
+        .filter(|store_repo| !projects.iter().any(|p| p.name == store_repo.alias))
+        .count();
+
+    if missing_count > 0 && missing_count == entry.repos.len() {
+        Some("orphaned (all source repos removed from project)".to_string())
+    } else {
+        None
+    }
+}
+
 pub(crate) fn handle_prune(args: PruneArgs, _verbose: bool, json: bool) -> Result<()> {
     let dry_run = args.dry_run;
 
@@ -33,56 +81,44 @@ pub(crate) fn handle_prune(args: PruneArgs, _verbose: bool, json: bool) -> Resul
 
     let now = Utc::now().timestamp();
     let mut to_remove: Vec<PruneEntry> = Vec::new();
+    let mut config_cache: std::collections::HashMap<String, Option<Vec<meta_cli::config::ProjectInfo>>> =
+        std::collections::HashMap::new();
 
     for (path_key, entry) in &store.worktrees {
         let wt_path = Path::new(path_key);
 
         // Check if path exists (orphaned detection)
         if !wt_path.exists() {
-            to_remove.push(PruneEntry {
-                name: entry.name.clone(),
-                path: path_key.clone(),
-                reason: "orphaned (missing directory)".to_string(),
-                age_seconds: None,
-            });
+            to_remove.push(create_prune_entry(
+                entry.name.clone(),
+                path_key.clone(),
+                "orphaned (missing directory)",
+                None,
+            ));
             continue;
         }
 
         // Check if source project directory still exists
         let project_path = Path::new(&entry.project);
         if !project_path.exists() {
-            to_remove.push(PruneEntry {
-                name: entry.name.clone(),
-                path: path_key.clone(),
-                reason: "orphaned (source project missing)".to_string(),
-                age_seconds: None,
-            });
+            to_remove.push(create_prune_entry(
+                entry.name.clone(),
+                path_key.clone(),
+                "orphaned (source project missing)",
+                None,
+            ));
             continue;
         }
 
-        // Check if source repos still exist in project
-        // Load meta config to check if repos are still defined
-        if let Some((meta_path, _format)) = meta_cli::config::find_meta_config_in(project_path) {
-            if let Ok((projects, _)) = meta_cli::config::parse_meta_config(&meta_path) {
-                let mut missing_repos = Vec::new();
-                for store_repo in &entry.repos {
-                    // Check if this repo alias still exists in the project's .meta config
-                    if !projects.iter().any(|p| p.name == store_repo.alias) {
-                        missing_repos.push(store_repo.alias.clone());
-                    }
-                }
-
-                // If all repos are missing, consider it orphaned
-                if !missing_repos.is_empty() && missing_repos.len() == entry.repos.len() {
-                    to_remove.push(PruneEntry {
-                        name: entry.name.clone(),
-                        path: path_key.clone(),
-                        reason: "orphaned (all source repos removed from project)".to_string(),
-                        age_seconds: None,
-                    });
-                    continue;
-                }
-            }
+        // Check if source repos still exist in project (with config caching)
+        if let Some(reason) = check_repo_orphaned(entry, &mut config_cache) {
+            to_remove.push(create_prune_entry(
+                entry.name.clone(),
+                path_key.clone(),
+                reason,
+                None,
+            ));
+            continue;
         }
 
         // Check TTL expiration
@@ -91,12 +127,12 @@ pub(crate) fn handle_prune(args: PruneArgs, _verbose: bool, json: bool) -> Resul
                 // Total age = configured TTL + seconds past expiry
                 let overdue = (-remaining) as u64;
                 let age = entry.ttl_seconds.unwrap() + overdue;
-                to_remove.push(PruneEntry {
-                    name: entry.name.clone(),
-                    path: path_key.clone(),
-                    reason: "ttl_expired".to_string(),
-                    age_seconds: Some(age),
-                });
+                to_remove.push(create_prune_entry(
+                    entry.name.clone(),
+                    path_key.clone(),
+                    "ttl_expired",
+                    Some(age),
+                ));
             }
         }
     }
