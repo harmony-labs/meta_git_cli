@@ -9,7 +9,7 @@ use meta_git_lib::worktree::types::*;
 
 use super::cli_types::AddArgs;
 
-pub(crate) fn handle_add(args: AddArgs, verbose: bool, json: bool) -> Result<()> {
+pub(crate) fn handle_add(args: AddArgs, verbose: bool, json: bool, strict: bool) -> Result<()> {
     let name = &args.name;
     validate_worktree_name(name)?;
 
@@ -68,7 +68,7 @@ pub(crate) fn handle_add(args: AddArgs, verbose: bool, json: bool) -> Result<()>
 
     // Update centralized store
     let new_repos: Vec<StoreRepoEntry> = added.iter().map(StoreRepoEntry::from).collect();
-    super::warn_store_error(store_extend_repos(&wt_dir, new_repos));
+    super::warn_store_error(store_extend_repos(&wt_dir, new_repos), strict)?;
 
     if json {
         let output = AddOutput {

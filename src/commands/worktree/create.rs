@@ -13,11 +13,10 @@ use meta_git_lib::worktree::types::{
 
 use super::cli_types::CreateArgs;
 
-// TODO: Add BATS integration tests for --strict mode behavior:
-// - Test that --strict converts warnings to errors when --from-ref skips repos
-// - Test that without --strict, warnings are issued but execution continues
-// - Test error message format in strict mode
-pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool) -> Result<()> {
+pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool, global_strict: bool) -> Result<()> {
+    // Merge global --strict with local --strict (either enables strict mode)
+    let strict = args.strict || global_strict;
+
     let name = &args.name;
     validate_worktree_name(name)?;
 
@@ -26,25 +25,20 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool) -> Resu
     let use_all = args.all;
     let ephemeral = args.ephemeral;
     let ttl_seconds = args.ttl;
-    let custom_meta: HashMap<String, String> = args
-        .custom_meta
-        .iter()
-        .filter_map(|s| {
-            if let Some(eq_pos) = s.find('=') {
-                Some((s[..eq_pos].to_string(), s[eq_pos + 1..].to_string()))
-            } else {
-                eprintln!(
-                    "{} --meta value '{}' missing '=' separator (expected key=value), skipping",
-                    "warning:".yellow().bold(),
-                    s
-                );
-                None
-            }
-        })
-        .collect();
+    // Parse custom metadata, collecting any invalid entries for strict mode
+    let mut custom_meta = HashMap::new();
+    for s in &args.custom_meta {
+        if let Some(eq_pos) = s.find('=') {
+            custom_meta.insert(s[..eq_pos].to_string(), s[eq_pos + 1..].to_string());
+        } else {
+            super::warn_or_bail(
+                strict,
+                format!("--meta value '{}' missing '=' separator (expected key=value), skipping", s),
+            )?;
+        }
+    }
     let from_ref = args.from_ref.as_deref();
     let from_pr_spec = args.from_pr.as_deref();
-    let strict = args.strict;
 
     // Check mutual exclusion of --from-ref and --from-pr
     if from_ref.is_some() && from_pr_spec.is_some() {
@@ -121,12 +115,10 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool) -> Resu
             if *alias != "." && repo_matches_spec(source, pr_repo_spec) {
                 // Fetch the PR branch
                 if let Err(e) = git_fetch_branch(source, pr_branch) {
-                    eprintln!(
-                        "{} Failed to fetch PR branch '{}': {}",
-                        "warning:".yellow().bold(),
-                        pr_branch,
-                        e
-                    );
+                    super::warn_or_bail(
+                        strict,
+                        format!("Failed to fetch PR branch '{}': {}", pr_branch, e),
+                    )?;
                 }
                 *branch = pr_branch.clone();
                 matched = true;
@@ -134,12 +126,10 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool) -> Resu
             }
         }
         if !matched {
-            eprintln!(
-                "{} No repo matches '{}'. PR branch '{}' not applied.",
-                "warning:".yellow().bold(),
-                pr_repo_spec,
-                pr_branch
-            );
+            super::warn_or_bail(
+                strict,
+                format!("No repo matches '{}'. PR branch '{}' not applied.", pr_repo_spec, pr_branch),
+            )?;
         }
     }
 
@@ -148,6 +138,7 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool) -> Resu
 
     // If "." is included, create it first (it becomes the worktree root).
     // git worktree add creates the target dir, so we skip create_dir_all.
+    let mut dot_created = false;
     if dot_included {
         let (_, source, branch) = repos_to_create
             .iter()
@@ -167,17 +158,26 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool) -> Resu
             std::fs::create_dir_all(parent)?;
         }
 
-        let created_branch = git_worktree_add(source, &wt_dir, branch, from_ref)?;
-        created_repos.push(CreateRepoEntry {
-            alias: ".".to_string(),
-            path: wt_dir.display().to_string(),
-            branch: branch.clone(),
-            created_branch,
-        });
+        match git_worktree_add(source, &wt_dir, branch, from_ref) {
+            Ok(created_branch) => {
+                created_repos.push(CreateRepoEntry {
+                    alias: ".".to_string(),
+                    path: wt_dir.display().to_string(),
+                    branch: branch.clone(),
+                    created_branch,
+                });
+                dot_created = true;
+            }
+            Err(e) if from_ref.is_some() => {
+                // --from-ref: skip root repo if ref doesn't exist (same as child repos)
+                super::warn_or_bail(strict, format!("Skipping '.': {}", e))?;
+            }
+            Err(e) => return Err(e),
+        }
     }
 
-    // Ensure wt_dir exists for child repos (when "." isn't included, it wasn't created by git)
-    if !dot_included {
+    // Ensure wt_dir exists for child repos (when "." isn't included or was skipped, it wasn't created by git)
+    if !dot_created {
         std::fs::create_dir_all(&wt_dir)?;
     }
 
@@ -209,22 +209,8 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool) -> Resu
             }
             Err(e) if from_ref.is_some() => {
                 // --from-ref: skip repos where ref doesn't exist
-                if strict {
-                    // --strict: error instead of warning
-                    anyhow::bail!(
-                        "Repo '{}' skipped due to missing ref (strict mode enabled): {}",
-                        alias,
-                        e
-                    );
-                } else {
-                    eprintln!(
-                        "{} Skipping '{}': {}",
-                        "warning:".yellow().bold(),
-                        alias,
-                        e
-                    );
-                    continue;
-                }
+                super::warn_or_bail(strict, format!("Skipping '{}': {}", alias, e))?;
+                continue;
             }
             Err(e) => return Err(e),
         }
@@ -247,7 +233,7 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool) -> Resu
         repos: created_repos.iter().map(StoreRepoEntry::from).collect(),
         custom: custom_meta.clone(),
     };
-    super::warn_store_error(store_add(&wt_dir, store_entry));
+    super::warn_store_error(store_add(&wt_dir, store_entry), strict)?;
 
     // Fire post-create hook
     fire_post_create(

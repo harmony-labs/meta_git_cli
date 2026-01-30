@@ -60,7 +60,7 @@ fn check_repo_orphaned(
     }
 }
 
-pub(crate) fn handle_prune(args: PruneArgs, _verbose: bool, json: bool) -> Result<()> {
+pub(crate) fn handle_prune(args: PruneArgs, _verbose: bool, json: bool, strict: bool) -> Result<()> {
     let dry_run = args.dry_run;
 
     let store: WorktreeStoreData = store_list()?;
@@ -188,11 +188,10 @@ pub(crate) fn handle_prune(args: PruneArgs, _verbose: bool, json: bool) -> Resul
 
             // Only record as removed if directory is actually gone
             if wt_path.exists() {
-                eprintln!(
-                    "{} Failed to remove directory: {}",
-                    "warning:".yellow().bold(),
-                    wt_path.display()
-                );
+                super::warn_or_bail(
+                    strict,
+                    format!("Failed to remove directory: {}", wt_path.display()),
+                )?;
                 continue;
             }
         }
@@ -202,7 +201,7 @@ pub(crate) fn handle_prune(args: PruneArgs, _verbose: bool, json: bool) -> Resul
 
     // Batch-remove all pruned entries from store in a single lock cycle
     let keys_to_remove: Vec<String> = removed.iter().map(|e| e.path.clone()).collect();
-    super::warn_store_error(store_remove_batch(&keys_to_remove));
+    super::warn_store_error(store_remove_batch(&keys_to_remove), strict)?;
 
     // Fire post-prune hook
     let meta_dir = find_meta_dir();

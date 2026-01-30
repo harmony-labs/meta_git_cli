@@ -29,11 +29,13 @@ struct WorktreeParser {
 ///
 /// `command` is the matched command string (e.g., "worktree create", "worktree", "git worktree").
 /// `args` contains the remaining arguments after the command prefix.
+/// `strict` is the global strict mode flag from CLI options.
 pub fn execute_worktree_command(
     command: &str,
     args: &[String],
     verbose: bool,
     json: bool,
+    strict: bool,
 ) -> CommandResult {
     // Extract the subcommand name from the matched command prefix (if present).
     // When the plugin registers bare "worktree", the subcommand is in args[0] instead.
@@ -60,7 +62,7 @@ pub fn execute_worktree_command(
     }
 
     match WorktreeParser::try_parse_from(&clap_args) {
-        Ok(parsed) => match handle_worktree_command(parsed.command, verbose, json) {
+        Ok(parsed) => match handle_worktree_command(parsed.command, verbose, json, strict) {
             Ok(()) => CommandResult::Message(String::new()),
             Err(e) => CommandResult::Error(format!("{e}")),
         },
@@ -75,16 +77,17 @@ fn handle_worktree_command(
     command: WorktreeCommands,
     verbose: bool,
     json: bool,
+    global_strict: bool,
 ) -> Result<()> {
     match command {
-        WorktreeCommands::Create(args) => create::handle_create(args, verbose, json),
-        WorktreeCommands::Add(args) => add::handle_add(args, verbose, json),
-        WorktreeCommands::Destroy(args) => destroy::handle_destroy(args, verbose, json),
+        WorktreeCommands::Create(args) => create::handle_create(args, verbose, json, global_strict),
+        WorktreeCommands::Add(args) => add::handle_add(args, verbose, json, global_strict),
+        WorktreeCommands::Destroy(args) => destroy::handle_destroy(args, verbose, json, global_strict),
         WorktreeCommands::List(args) => list::handle_list(args, verbose, json),
         WorktreeCommands::Status(args) => status::handle_status(args, verbose, json),
         WorktreeCommands::Diff(args) => diff::handle_diff(args, verbose, json),
         WorktreeCommands::Exec(args) => exec::handle_exec(args, verbose, json),
-        WorktreeCommands::Prune(args) => prune::handle_prune(args, verbose, json),
+        WorktreeCommands::Prune(args) => prune::handle_prune(args, verbose, json, global_strict),
         WorktreeCommands::Unknown(args) => {
             let cmd = args.first().map(|s| s.as_str()).unwrap_or("");
             eprintln!(
@@ -98,14 +101,30 @@ fn handle_worktree_command(
     }
 }
 
-/// Log a store operation error as a warning without failing the command.
-pub(crate) fn warn_store_error(result: anyhow::Result<()>) {
-    if let Err(e) = result {
-        eprintln!(
-            "{} Failed to update store: {}",
-            "warning:".yellow().bold(),
-            e
-        );
+/// Emit a warning message, or bail with an error in strict mode.
+///
+/// In strict mode, returns Err to fail the command.
+/// In normal mode, prints a warning and returns Ok(()).
+///
+/// Use this for situations where an operation can continue despite a problem,
+/// but strict mode should treat it as a failure.
+pub(crate) fn warn_or_bail(strict: bool, message: impl std::fmt::Display) -> anyhow::Result<()> {
+    if strict {
+        anyhow::bail!("{} (strict mode)", message)
+    } else {
+        eprintln!("{} {}", "warning:".yellow().bold(), message);
+        Ok(())
+    }
+}
+
+/// Log a store operation error as a warning, or propagate in strict mode.
+///
+/// In strict mode, returns the error to fail the command.
+/// In normal mode, prints a warning and continues.
+pub(crate) fn warn_store_error(result: anyhow::Result<()>, strict: bool) -> anyhow::Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(e) => warn_or_bail(strict, format!("Failed to update store: {}", e)),
     }
 }
 
@@ -158,4 +177,59 @@ fn write_worktree_help(w: &mut dyn std::io::Write) {
     let _ = writeln!(w, "  --stat                   Show diffstat summary only");
     let _ = writeln!(w);
     let _ = writeln!(w, "Use 'meta worktree <command> --help' for more details.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── warn_or_bail tests ─────────────────────────────────
+
+    #[test]
+    fn warn_or_bail_returns_ok_in_normal_mode() {
+        let result = warn_or_bail(false, "test message");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn warn_or_bail_returns_err_in_strict_mode() {
+        let result = warn_or_bail(true, "test message");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("test message"));
+        assert!(err.to_string().contains("strict mode"));
+    }
+
+    #[test]
+    fn warn_or_bail_includes_message_in_error() {
+        let result = warn_or_bail(true, "specific error details");
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("specific error details"));
+    }
+
+    // ── warn_store_error tests ─────────────────────────────
+
+    #[test]
+    fn warn_store_error_passes_through_ok() {
+        let result = warn_store_error(Ok(()), false);
+        assert!(result.is_ok());
+
+        let result_strict = warn_store_error(Ok(()), true);
+        assert!(result_strict.is_ok());
+    }
+
+    #[test]
+    fn warn_store_error_returns_ok_for_error_in_normal_mode() {
+        let result = warn_store_error(Err(anyhow::anyhow!("store failed")), false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn warn_store_error_returns_err_in_strict_mode() {
+        let result = warn_store_error(Err(anyhow::anyhow!("store failed")), true);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Failed to update store"));
+        assert!(err.to_string().contains("store failed"));
+    }
 }

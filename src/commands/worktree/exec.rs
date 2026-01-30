@@ -54,7 +54,8 @@ impl Drop for EphemeralGuard {
             name: self.name.clone(),
             force: true,
         };
-        if let Err(e) = super::destroy::handle_destroy(destroy_args, self.verbose, self.json) {
+        // Ephemeral cleanup uses strict=false to ensure best-effort cleanup
+        if let Err(e) = super::destroy::handle_destroy(destroy_args, self.verbose, self.json, false) {
             eprintln!(
                 "{} Failed to destroy ephemeral worktree '{}': {e}",
                 "warning:".yellow().bold(),
@@ -126,7 +127,8 @@ fn handle_ephemeral_exec(args: ExecArgs, verbose: bool, json: bool) -> Result<()
     if verbose {
         eprintln!("Creating ephemeral worktree '{name}'...");
     }
-    super::create::handle_create(create_args, verbose, json)?;
+    // Ephemeral worktrees use global_strict=false to ensure creation succeeds
+    super::create::handle_create(create_args, verbose, json, false)?;
 
     // Guard ensures cleanup even on panic
     let guard = EphemeralGuard {

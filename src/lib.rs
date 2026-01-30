@@ -45,6 +45,7 @@ pub fn execute_command(
             args,
             options.verbose,
             options.json_output,
+            options.strict,
         );
     }
 

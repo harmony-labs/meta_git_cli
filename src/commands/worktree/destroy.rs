@@ -10,7 +10,7 @@ use meta_git_lib::worktree::types::*;
 
 use super::cli_types::DestroyArgs;
 
-pub(crate) fn handle_destroy(args: DestroyArgs, verbose: bool, json: bool) -> Result<()> {
+pub(crate) fn handle_destroy(args: DestroyArgs, verbose: bool, json: bool, strict: bool) -> Result<()> {
     let name = &args.name;
     validate_worktree_name(name)?;
     let force = args.force;
@@ -55,7 +55,7 @@ pub(crate) fn handle_destroy(args: DestroyArgs, verbose: bool, json: bool) -> Re
     }
 
     // Remove from centralized store
-    super::warn_store_error(store_remove(&wt_dir));
+    super::warn_store_error(store_remove(&wt_dir), strict)?;
 
     // Fire post-destroy hook
     fire_post_destroy(name, &wt_dir, force, meta_dir.as_deref());
