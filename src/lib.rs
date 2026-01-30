@@ -68,7 +68,7 @@ pub fn execute_command(
         }
         "git snapshot delete" => snapshot::execute_snapshot_delete(args, cwd),
         // Fallback: run raw git command across all repos
-        _ => return execute_raw_git_command(command, args, projects, cwd),
+        _ => return execute_raw_git_command(command, args, projects, options, cwd),
     };
 
     match result {
@@ -78,7 +78,7 @@ pub fn execute_command(
 }
 
 /// Execute a raw git command across all repos (fallback for unrecognized subcommands)
-fn execute_raw_git_command(command: &str, args: &[String], projects: &[String], cwd: &Path) -> CommandResult {
+fn execute_raw_git_command(command: &str, args: &[String], projects: &[String], options: &PluginRequestOptions, cwd: &Path) -> CommandResult {
     // Get project directories
     let dirs = match get_project_directories_with_fallback(projects, cwd) {
         Ok(d) => d,
@@ -105,7 +105,7 @@ fn execute_raw_git_command(command: &str, args: &[String], projects: &[String], 
         })
         .collect();
 
-    CommandResult::Plan(commands, Some(false)) // Sequential for readable output
+    CommandResult::Plan(commands, Some(options.parallel))
 }
 
 /// Get help text for the plugin
