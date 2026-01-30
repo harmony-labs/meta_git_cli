@@ -73,7 +73,8 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool) -> Resu
     }
 
     // Parse .meta to get project list
-    let projects = load_projects(&meta_dir)?;
+    // When --all is specified, include root repo "." if it's a git repository
+    let projects = meta_git_lib::worktree::helpers::load_projects_with_root(&meta_dir, use_all)?;
 
     // Determine which repos to include: Vec<(alias, source_path, branch)>
     let repos_to_create: Vec<(String, std::path::PathBuf, String)> = if use_all {
