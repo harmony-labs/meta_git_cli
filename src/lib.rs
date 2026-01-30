@@ -9,6 +9,7 @@ mod git_env;
 mod helpers;
 mod snapshot;
 mod ssh;
+mod ssh_setup;
 mod status;
 mod update;
 
@@ -78,8 +79,17 @@ pub fn execute_command(
     }
 }
 
+/// Check if a git command accesses remote repositories
+fn is_remote_command(command: &str) -> bool {
+    let remote_commands = ["push", "pull", "fetch", "clone", "ls-remote"];
+    let cmd_lower = command.to_lowercase();
+    remote_commands.iter().any(|rc| cmd_lower.contains(rc))
+}
+
 /// Execute a raw git command across all repos (fallback for unrecognized subcommands)
 fn execute_raw_git_command(command: &str, args: &[String], projects: &[String], options: &PluginRequestOptions, cwd: &Path) -> CommandResult {
+    use meta_plugin_protocol::ExecutionPlan;
+
     // Get project directories
     let dirs = match get_project_directories_with_fallback(projects, cwd) {
         Ok(d) => d,
@@ -106,7 +116,22 @@ fn execute_raw_git_command(command: &str, args: &[String], projects: &[String], 
         })
         .collect();
 
-    CommandResult::Plan(commands, Some(options.parallel))
+    // For remote commands running in parallel, add SSH pre-commands to establish
+    // ControlMaster connections before the parallel execution starts
+    if options.parallel && is_remote_command(command) {
+        let hosts = ssh::discover_ssh_hosts(cwd);
+        let host_refs: Vec<&str> = hosts.iter().map(|s| s.as_str()).collect();
+        let pre_commands = ssh_setup::ssh_pre_commands(&host_refs);
+
+        CommandResult::FullPlan(ExecutionPlan {
+            pre_commands,
+            commands,
+            post_commands: vec![],
+            parallel: Some(true),
+        })
+    } else {
+        CommandResult::Plan(commands, Some(options.parallel))
+    }
 }
 
 /// Get help text for the plugin
@@ -396,6 +421,7 @@ the only commit message
     #[test]
     fn test_execution_plan_serialization() {
         let plan = ExecutionPlan {
+            pre_commands: vec![],
             commands: vec![
                 PlannedCommand {
                     dir: "./repo1".to_string(),
@@ -408,6 +434,7 @@ the only commit message
                     env: None,
                 },
             ],
+            post_commands: vec![],
             parallel: Some(false),
         };
 
@@ -420,11 +447,13 @@ the only commit message
     #[test]
     fn test_execution_plan_without_parallel() {
         let plan = ExecutionPlan {
+            pre_commands: vec![],
             commands: vec![PlannedCommand {
                 dir: ".".to_string(),
                 cmd: "ls".to_string(),
                 env: None,
             }],
+            post_commands: vec![],
             parallel: None,
         };
 
@@ -450,11 +479,13 @@ the only commit message
     fn test_plan_response_serialization() {
         let response = PlanResponse {
             plan: ExecutionPlan {
+                pre_commands: vec![],
                 commands: vec![PlannedCommand {
                     dir: "project".to_string(),
                     cmd: "make build".to_string(),
                     env: None,
                 }],
+                post_commands: vec![],
                 parallel: Some(true),
             },
         };
@@ -472,6 +503,7 @@ the only commit message
         // Test that the JSON structure matches what subprocess_plugins expects
         let response = PlanResponse {
             plan: ExecutionPlan {
+                pre_commands: vec![],
                 commands: vec![
                     PlannedCommand {
                         dir: "a".to_string(),
@@ -484,6 +516,7 @@ the only commit message
                         env: None,
                     },
                 ],
+                post_commands: vec![],
                 parallel: Some(false),
             },
         };
@@ -505,7 +538,9 @@ the only commit message
     #[test]
     fn test_execution_plan_empty_commands() {
         let plan = ExecutionPlan {
+            pre_commands: vec![],
             commands: vec![],
+            post_commands: vec![],
             parallel: None,
         };
 
@@ -551,7 +586,9 @@ the only commit message
             .collect();
 
         let plan = ExecutionPlan {
+            pre_commands: vec![],
             commands,
+            post_commands: vec![],
             parallel: Some(true),
         };
 
@@ -640,7 +677,9 @@ the only commit message
 
         let response = PlanResponse {
             plan: ExecutionPlan {
+                pre_commands: vec![],
                 commands,
+                post_commands: vec![],
                 parallel: Some(false),
             },
         };
@@ -674,7 +713,9 @@ the only commit message
 
         let response = PlanResponse {
             plan: ExecutionPlan {
+                pre_commands: vec![],
                 commands,
+                post_commands: vec![],
                 parallel: Some(false),
             },
         };
@@ -685,5 +726,47 @@ the only commit message
         assert!(json.contains("git clone"));
         assert!(json.contains("repo1"));
         assert!(json.contains("repo2"));
+    }
+
+    // ============ Remote Command Detection Tests ============
+
+    #[test]
+    fn test_is_remote_command_push() {
+        assert!(super::is_remote_command("git push"));
+        assert!(super::is_remote_command("git push origin main"));
+    }
+
+    #[test]
+    fn test_is_remote_command_pull() {
+        assert!(super::is_remote_command("git pull"));
+        assert!(super::is_remote_command("git pull --rebase"));
+    }
+
+    #[test]
+    fn test_is_remote_command_fetch() {
+        assert!(super::is_remote_command("git fetch"));
+        assert!(super::is_remote_command("git fetch --all"));
+    }
+
+    #[test]
+    fn test_is_remote_command_clone() {
+        assert!(super::is_remote_command("git clone"));
+        assert!(super::is_remote_command("git clone https://github.com/org/repo.git"));
+    }
+
+    #[test]
+    fn test_is_remote_command_ls_remote() {
+        assert!(super::is_remote_command("git ls-remote"));
+    }
+
+    #[test]
+    fn test_is_remote_command_local_commands() {
+        assert!(!super::is_remote_command("git status"));
+        assert!(!super::is_remote_command("git add ."));
+        assert!(!super::is_remote_command("git commit -m \"msg\""));
+        assert!(!super::is_remote_command("git log"));
+        assert!(!super::is_remote_command("git diff"));
+        assert!(!super::is_remote_command("git branch"));
+        assert!(!super::is_remote_command("git checkout main"));
     }
 }

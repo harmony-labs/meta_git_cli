@@ -197,7 +197,7 @@ fn load_ssh_config(cwd: &Path) -> Option<meta_git_lib::SshConfig> {
 
 /// Discover unique SSH hosts from the .meta config in the current directory.
 /// Falls back to ["github.com"] if no .meta config is found or no SSH URLs exist.
-fn discover_ssh_hosts(cwd: &Path) -> Vec<String> {
+pub fn discover_ssh_hosts(cwd: &Path) -> Vec<String> {
     let Some((config_path, _format)) = meta_cli::config::find_meta_config(cwd, None) else {
         return vec!["github.com".to_string()];
     };
