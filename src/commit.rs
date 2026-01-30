@@ -1,10 +1,10 @@
 use console::style;
 use meta_cli::config;
-use meta_plugin_protocol::{CommandResult, PlannedCommand};
+use meta_plugin_protocol::{CommandResult, PlannedCommand, PluginRequestOptions};
 use std::process::Command;
 
 /// Execute git commit with optional --edit flag for per-repo messages
-pub(crate) fn execute_git_commit(args: &[String], projects: &[String], cwd: &std::path::Path) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_git_commit(args: &[String], projects: &[String], options: &PluginRequestOptions, cwd: &std::path::Path) -> anyhow::Result<CommandResult> {
     // Parse arguments
     let mut use_editor = false;
     let mut message: Option<String> = None;
@@ -93,7 +93,7 @@ pub(crate) fn execute_git_commit(args: &[String], projects: &[String], cwd: &std
             })
             .collect();
 
-        return Ok(CommandResult::Plan(commands, Some(false))); // Sequential for commit
+        return Ok(CommandResult::Plan(commands, Some(options.parallel)));
     } else {
         // No message provided, show what would be committed
         println!("Repositories with staged changes:");

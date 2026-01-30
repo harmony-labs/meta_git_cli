@@ -54,11 +54,11 @@ pub fn execute_command(
     }
 
     let result = match command {
-        "git status" => status::execute_git_status(projects, cwd),
+        "git status" => status::execute_git_status(projects, options, cwd),
         "git clone" => clone::execute_git_clone(args, options.dry_run, cwd),
         "git update" => update::execute_git_update(projects, options.dry_run, cwd),
         "git setup-ssh" => ssh::execute_git_setup_ssh(cwd),
-        "git commit" => commit::execute_git_commit(args, projects, cwd),
+        "git commit" => commit::execute_git_commit(args, projects, options, cwd),
         "git snapshot" => snapshot::execute_snapshot_help(),
         "git snapshot create" => snapshot::execute_snapshot_create(args, projects, cwd),
         "git snapshot list" => snapshot::execute_snapshot_list(cwd),
