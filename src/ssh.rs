@@ -8,7 +8,10 @@ pub(crate) fn execute_git_setup_ssh(cwd: &Path) -> anyhow::Result<CommandResult>
     // Step 1: Check and fix remote URL mismatches
     check_and_fix_remotes(cwd);
 
-    // Step 2: SSH multiplexing setup (existing behavior)
+    // Step 2: Load SSH config from .meta.yaml if available
+    let ssh_config = load_ssh_config(cwd);
+
+    // Step 3: SSH multiplexing setup
     let hosts = discover_ssh_hosts(cwd);
     let host_refs: Vec<&str> = hosts.iter().map(|s| s.as_str()).collect();
 
@@ -19,7 +22,7 @@ pub(crate) fn execute_git_setup_ssh(cwd: &Path) -> anyhow::Result<CommandResult>
         );
         println!("  Your parallel git operations should work efficiently.");
     } else {
-        match meta_git_lib::prompt_and_setup_multiplexing(&host_refs) {
+        match meta_git_lib::prompt_and_setup_multiplexing(&host_refs, ssh_config.as_ref()) {
             Ok(true) => {
                 println!();
                 println!(
@@ -167,6 +170,29 @@ fn check_and_fix_remotes(cwd: &Path) {
     }
 
     println!();
+}
+
+/// Load SSH configuration from .meta.yaml if present.
+///
+/// Looks for the `ssh:` section in .meta.yaml:
+/// ```yaml
+/// ssh:
+///   control_persist: 300  # 5 minutes
+/// ```
+fn load_ssh_config(cwd: &Path) -> Option<meta_git_lib::SshConfig> {
+    let Some((config_path, _format)) = meta_cli::config::find_meta_config(cwd, None) else {
+        return None;
+    };
+
+    // Read the config file
+    let content = std::fs::read_to_string(&config_path).ok()?;
+
+    // Parse as YAML to access the 'ssh' section
+    let yaml: serde_yaml::Value = serde_yaml::from_str(&content).ok()?;
+    let ssh_section = yaml.get("ssh")?;
+
+    // Deserialize the ssh section into SshConfig
+    serde_yaml::from_value(ssh_section.clone()).ok()
 }
 
 /// Discover unique SSH hosts from the .meta config in the current directory.
