@@ -1,6 +1,6 @@
+use crate::git_env;
 use crate::helpers::get_project_directories_with_fallback;
 use meta_plugin_protocol::{CommandResult, PlannedCommand, PluginRequestOptions};
-use std::collections::HashMap;
 use std::path::Path;
 
 pub(crate) fn execute_git_status(projects: &[String], options: &PluginRequestOptions, cwd: &Path) -> anyhow::Result<CommandResult> {
@@ -8,8 +8,8 @@ pub(crate) fn execute_git_status(projects: &[String], options: &PluginRequestOpt
     // Use projects from meta_cli if available (enables --recursive), otherwise read local .meta
     let dirs = get_project_directories_with_fallback(projects, cwd)?;
 
-    // Disable pager for git commands run across repos to prevent blocking
-    let git_env = Some(HashMap::from([("GIT_PAGER".to_string(), "cat".to_string())]));
+    // Set git-specific environment variables (pager, colors, prompts)
+    let git_env = Some(git_env::git_env());
 
     let commands: Vec<PlannedCommand> = dirs
         .into_iter()

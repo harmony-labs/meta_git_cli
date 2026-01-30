@@ -5,6 +5,7 @@
 mod clone;
 mod clone_queue;
 mod commit;
+mod git_env;
 mod helpers;
 mod snapshot;
 mod ssh;
@@ -15,7 +16,6 @@ mod commands;
 
 use log::debug;
 use meta_plugin_protocol::{CommandResult, PlannedCommand, PluginRequestOptions};
-use std::collections::HashMap;
 use std::path::Path;
 
 use helpers::get_project_directories_with_fallback;
@@ -94,8 +94,8 @@ fn execute_raw_git_command(command: &str, args: &[String], projects: &[String], 
         format!("{} {}", command, args.join(" "))
     };
 
-    // Disable pager for git commands run across repos to prevent blocking
-    let git_env = Some(HashMap::from([("GIT_PAGER".to_string(), "cat".to_string())]));
+    // Set git-specific environment variables (pager, colors, prompts)
+    let git_env = Some(git_env::git_env());
 
     let commands: Vec<PlannedCommand> = dirs
         .into_iter()

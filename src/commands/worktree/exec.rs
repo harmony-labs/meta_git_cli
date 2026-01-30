@@ -1,10 +1,12 @@
 use anyhow::Result;
 use colored::*;
+use std::collections::HashMap;
 
 use meta_cli::worktree::discover_worktree_repos;
 use meta_git_lib::worktree::helpers::*;
 
 use super::cli_types::{CreateArgs, DestroyArgs, ExecArgs};
+use crate::git_env;
 
 fn build_loop_config(
     directories: Vec<String>,
@@ -13,6 +15,7 @@ fn build_loop_config(
     parallel: bool,
     verbose: bool,
     json: bool,
+    env: Option<HashMap<String, String>>,
 ) -> loop_lib::LoopConfig {
     loop_lib::LoopConfig {
         directories,
@@ -34,6 +37,7 @@ fn build_loop_config(
         json_output: json,
         add_aliases_to_global_looprc: false,
         spawn_stagger_ms: 0,
+        env,
     }
 }
 
@@ -90,6 +94,7 @@ pub(crate) fn handle_exec(args: ExecArgs, verbose: bool, json: bool) -> Result<(
         args.parallel,
         verbose,
         json,
+        Some(git_env::git_env()),
     );
 
     loop_lib::run(&config, &command_str)?;
@@ -150,7 +155,15 @@ fn handle_ephemeral_exec(args: ExecArgs, verbose: bool, json: bool) -> Result<()
         .collect();
 
     let command_str = cmd_parts.join(" ");
-    let config = build_loop_config(directories, include_filters, exclude_filters, parallel, verbose, json);
+    let config = build_loop_config(
+        directories,
+        include_filters,
+        exclude_filters,
+        parallel,
+        verbose,
+        json,
+        Some(git_env::git_env()),
+    );
 
     let exec_result = loop_lib::run(&config, &command_str);
 
