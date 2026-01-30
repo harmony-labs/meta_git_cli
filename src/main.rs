@@ -1,4 +1,7 @@
 //! meta-git subprocess plugin
+//!
+//! Logging is handled by `run_plugin()` which initializes env_logger.
+//! Use RUST_LOG=meta_git_cli=debug for debug output.
 
 use meta_plugin_protocol::{
     CommandResult, PluginDefinition, PluginHelp, PluginInfo, PluginRequest, run_plugin,
@@ -6,36 +9,7 @@ use meta_plugin_protocol::{
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Simple stderr logger that outputs colored warnings/errors.
-/// Stdout is reserved for the plugin JSON protocol.
-struct StderrLogger;
-
-impl log::Log for StderrLogger {
-    fn enabled(&self, metadata: &log::Metadata) -> bool {
-        metadata.level() <= log::Level::Info
-    }
-
-    fn log(&self, record: &log::Record) {
-        if !self.enabled(record.metadata()) {
-            return;
-        }
-        use colored::Colorize;
-        let prefix = match record.level() {
-            log::Level::Error => "error:".red().bold().to_string(),
-            log::Level::Warn => "warning:".yellow().bold().to_string(),
-            log::Level::Info => "notice:".cyan().to_string(),
-            _ => return,
-        };
-        eprintln!("{prefix} {}", record.args());
-    }
-
-    fn flush(&self) {}
-}
-
-static LOGGER: StderrLogger = StderrLogger;
-
 fn main() {
-    let _ = log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Info));
     let mut help_commands = HashMap::new();
     help_commands.insert(
         "clone".to_string(),
