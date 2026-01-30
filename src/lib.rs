@@ -117,17 +117,23 @@ fn execute_raw_git_command(command: &str, args: &[String], projects: &[String], 
         .collect();
 
     // For remote commands running in parallel, add SSH pre-commands to establish
-    // ControlMaster connections before the parallel execution starts
+    // ControlMaster connections before the parallel execution starts.
+    // Also limit parallelism to 10 (SSH ControlMaster default MaxSessions limit).
     if options.parallel && is_remote_command(command) {
         let hosts = ssh::discover_ssh_hosts(cwd);
         let host_refs: Vec<&str> = hosts.iter().map(|s| s.as_str()).collect();
         let pre_commands = ssh_setup::ssh_pre_commands(&host_refs);
+
+        // SSH ControlMaster has a default MaxSessions limit of 10 (server-side).
+        // Limit parallelism to avoid exceeding this and triggering mux warnings.
+        const SSH_MAX_SESSIONS: usize = 10;
 
         CommandResult::FullPlan(ExecutionPlan {
             pre_commands,
             commands,
             post_commands: vec![],
             parallel: Some(true),
+            max_parallel: Some(SSH_MAX_SESSIONS),
         })
     } else {
         CommandResult::Plan(commands, Some(options.parallel))
@@ -436,6 +442,7 @@ the only commit message
             ],
             post_commands: vec![],
             parallel: Some(false),
+            max_parallel: None,
         };
 
         let json = serde_json::to_string(&plan).unwrap();
@@ -455,11 +462,13 @@ the only commit message
             }],
             post_commands: vec![],
             parallel: None,
+            max_parallel: None,
         };
 
         let json = serde_json::to_string(&plan).unwrap();
-        // parallel should be omitted when None due to skip_serializing_if
+        // parallel and max_parallel should be omitted when None due to skip_serializing_if
         assert!(!json.contains("parallel"));
+        assert!(!json.contains("max_parallel"));
     }
 
     #[test]
@@ -487,6 +496,7 @@ the only commit message
                 }],
                 post_commands: vec![],
                 parallel: Some(true),
+                max_parallel: None,
             },
         };
 
@@ -518,6 +528,7 @@ the only commit message
                 ],
                 post_commands: vec![],
                 parallel: Some(false),
+                max_parallel: None,
             },
         };
 
@@ -542,6 +553,7 @@ the only commit message
             commands: vec![],
             post_commands: vec![],
             parallel: None,
+            max_parallel: None,
         };
 
         let json = serde_json::to_string(&plan).unwrap();
@@ -590,6 +602,7 @@ the only commit message
             commands,
             post_commands: vec![],
             parallel: Some(true),
+            max_parallel: None,
         };
 
         let json = serde_json::to_string(&plan).unwrap();
@@ -681,6 +694,7 @@ the only commit message
                 commands,
                 post_commands: vec![],
                 parallel: Some(false),
+                max_parallel: None,
             },
         };
 
@@ -717,6 +731,7 @@ the only commit message
                 commands,
                 post_commands: vec![],
                 parallel: Some(false),
+                max_parallel: None,
             },
         };
 
@@ -768,5 +783,46 @@ the only commit message
         assert!(!super::is_remote_command("git diff"));
         assert!(!super::is_remote_command("git branch"));
         assert!(!super::is_remote_command("git checkout main"));
+    }
+
+    #[test]
+    fn test_execution_plan_max_parallel_serialization() {
+        let plan = ExecutionPlan {
+            pre_commands: vec![],
+            commands: vec![PlannedCommand {
+                dir: ".".to_string(),
+                cmd: "git push".to_string(),
+                env: None,
+            }],
+            post_commands: vec![],
+            parallel: Some(true),
+            max_parallel: Some(10),
+        };
+
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("\"max_parallel\":10"));
+
+        // Verify round-trip
+        let restored: ExecutionPlan = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.max_parallel, Some(10));
+    }
+
+    #[test]
+    fn test_execution_plan_max_parallel_omitted_when_none() {
+        let plan = ExecutionPlan {
+            pre_commands: vec![],
+            commands: vec![PlannedCommand {
+                dir: ".".to_string(),
+                cmd: "git status".to_string(),
+                env: None,
+            }],
+            post_commands: vec![],
+            parallel: Some(true),
+            max_parallel: None,
+        };
+
+        let json = serde_json::to_string(&plan).unwrap();
+        // max_parallel should be omitted when None due to skip_serializing_if
+        assert!(!json.contains("max_parallel"));
     }
 }

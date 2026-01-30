@@ -38,6 +38,7 @@ fn build_loop_config(
         add_aliases_to_global_looprc: false,
         spawn_stagger_ms: 0,
         env,
+        max_parallel: None,
     }
 }
 
