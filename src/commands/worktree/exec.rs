@@ -39,6 +39,7 @@ fn build_loop_config(
         spawn_stagger_ms: 0,
         env,
         max_parallel: None,
+        root_dir: None, // Worktree exec paths don't use "." convention
     }
 }
 
