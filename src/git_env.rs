@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn git_env_with_ssh_none_has_no_ssh_command() {
         let env = git_env_with_ssh(None);
-        assert!(env.get("GIT_SSH_COMMAND").is_none());
+        assert!(!env.contains_key("GIT_SSH_COMMAND"));
     }
 
     #[test]

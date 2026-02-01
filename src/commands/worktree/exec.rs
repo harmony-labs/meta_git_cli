@@ -61,7 +61,8 @@ impl Drop for EphemeralGuard {
             force: true,
         };
         // Ephemeral cleanup uses strict=false to ensure best-effort cleanup
-        if let Err(e) = super::destroy::handle_destroy(destroy_args, self.verbose, self.json, false) {
+        if let Err(e) = super::destroy::handle_destroy(destroy_args, self.verbose, self.json, false)
+        {
             eprintln!(
                 "{} Failed to destroy ephemeral worktree '{}': {e}",
                 "warning:".yellow().bold(),
@@ -83,10 +84,7 @@ pub(crate) fn handle_exec(args: ExecArgs, verbose: bool, json: bool) -> Result<(
     let name = &args.name;
     let repos = discover_and_validate_worktree(name)?;
 
-    let directories: Vec<String> = repos
-        .iter()
-        .map(|r| r.path.display().to_string())
-        .collect();
+    let directories: Vec<String> = repos.iter().map(|r| r.path.display().to_string()).collect();
 
     let command_str = args.command.join(" ");
     let config = build_loop_config(
@@ -151,10 +149,7 @@ fn handle_ephemeral_exec(args: ExecArgs, verbose: bool, json: bool) -> Result<()
 
     // Run the command
     let repos = discover_worktree_repos(&wt_dir)?;
-    let directories: Vec<String> = repos
-        .iter()
-        .map(|r| r.path.display().to_string())
-        .collect();
+    let directories: Vec<String> = repos.iter().map(|r| r.path.display().to_string()).collect();
 
     let command_str = cmd_parts.join(" ");
     let config = build_loop_config(

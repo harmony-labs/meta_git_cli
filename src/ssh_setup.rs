@@ -23,8 +23,7 @@ pub fn ssh_pre_commands(hosts: &[&str]) -> Vec<PlannedCommand> {
         .map(|host| PlannedCommand {
             dir: ".".to_string(),
             cmd: format!(
-                "ssh -fNM -o ControlMaster=auto -o ControlPath=~/.ssh/sockets/%r@%h-%p -o ControlPersist=600 -o ConnectTimeout=10 git@{}",
-                host
+                "ssh -fNM -o ControlMaster=auto -o ControlPath=~/.ssh/sockets/%r@%h-%p -o ControlPersist=600 -o ConnectTimeout=10 git@{host}"
             ),
             env: None,
         })
@@ -55,8 +54,8 @@ pub fn socket_exists(host: &str) -> bool {
 
     // Check common socket path patterns
     let socket_patterns = [
-        format!("{}/.ssh/sockets/git@{}-22", home, host),
-        format!("{}/.ssh/sockets/%r@%h-%p", home), // literal pattern (shouldn't exist)
+        format!("{home}/.ssh/sockets/git@{host}-22"),
+        format!("{home}/.ssh/sockets/%r@%h-%p"), // literal pattern (shouldn't exist)
     ];
 
     for pattern in &socket_patterns {
@@ -77,7 +76,7 @@ fn is_multiplexing_configured(host: &str) -> bool {
         Err(_) => return false,
     };
 
-    let config_path = format!("{}/.ssh/config", home);
+    let config_path = format!("{home}/.ssh/config");
     let config_content = match std::fs::read_to_string(&config_path) {
         Ok(c) => c,
         Err(_) => return false,

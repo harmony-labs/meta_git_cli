@@ -36,7 +36,10 @@ pub fn execute_command(
 ) -> CommandResult {
     debug!("[meta_git_cli] Plugin invoked with command: '{command}'");
     debug!("[meta_git_cli] Args: {args:?}");
-    debug!("[meta_git_cli] Options: parallel={}, dry_run={}, verbose={}", options.parallel, options.dry_run, options.verbose);
+    debug!(
+        "[meta_git_cli] Options: parallel={}, dry_run={}, verbose={}",
+        options.parallel, options.dry_run, options.verbose
+    );
     debug!("[meta_git_cli] Projects from meta_cli: {projects:?}");
 
     // Worktree commands (meta worktree * and meta git worktree *)
@@ -88,7 +91,13 @@ fn is_remote_command(command: &str) -> bool {
 }
 
 /// Execute a raw git command across all repos (fallback for unrecognized subcommands)
-fn execute_raw_git_command(command: &str, args: &[String], projects: &[String], options: &PluginRequestOptions, cwd: &Path) -> CommandResult {
+fn execute_raw_git_command(
+    command: &str,
+    args: &[String],
+    projects: &[String],
+    options: &PluginRequestOptions,
+    cwd: &Path,
+) -> CommandResult {
     use meta_plugin_protocol::ExecutionPlan;
 
     // Get project directories
@@ -221,7 +230,7 @@ mod tests {
     use super::*;
     use commit::parse_multi_commit_file;
     use helpers::get_project_directories;
-    use meta_plugin_protocol::{ExecutionPlan, PlannedCommand, PlanResponse};
+    use meta_plugin_protocol::{ExecutionPlan, PlanResponse, PlannedCommand};
     use tempfile::TempDir;
 
     #[test]
@@ -246,7 +255,8 @@ mod tests {
         .unwrap();
         let (projects, _) = meta_cli::config::parse_meta_config(&meta_path).unwrap();
         assert_eq!(projects.len(), 2);
-        let names: std::collections::HashSet<_> = projects.iter().map(|p| p.name.as_str()).collect();
+        let names: std::collections::HashSet<_> =
+            projects.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains("foo"));
         assert!(names.contains("bar"));
     }
@@ -544,7 +554,7 @@ the only commit message
         assert_eq!(commands.len(), 2);
         assert_eq!(commands[0].get("dir").unwrap().as_str().unwrap(), "a");
         assert_eq!(commands[0].get("cmd").unwrap().as_str().unwrap(), "cmd1");
-        assert_eq!(plan.get("parallel").unwrap().as_bool().unwrap(), false);
+        assert!(!plan.get("parallel").unwrap().as_bool().unwrap());
     }
 
     #[test]
@@ -592,7 +602,7 @@ the only commit message
     fn test_execution_plan_many_commands() {
         let commands: Vec<PlannedCommand> = (0..100)
             .map(|i| PlannedCommand {
-                dir: format!("./repo_{}", i),
+                dir: format!("./repo_{i}"),
                 cmd: "git status".to_string(),
                 env: None,
             })
@@ -705,13 +715,13 @@ the only commit message
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(parsed["plan"]["commands"].is_array());
         assert_eq!(parsed["plan"]["commands"].as_array().unwrap().len(), 3);
-        assert_eq!(parsed["plan"]["parallel"].as_bool().unwrap(), false);
+        assert!(!parsed["plan"]["parallel"].as_bool().unwrap());
     }
 
     #[test]
     fn test_git_update_plan_for_missing_repos() {
         // Simulate what execute_git_update would return for missing repos
-        let missing_repos = vec![
+        let missing_repos = [
             ("repo1", "git@github.com:org/repo1.git"),
             ("repo2", "git@github.com:org/repo2.git"),
         ];
@@ -721,7 +731,7 @@ the only commit message
             .iter()
             .map(|(name, url)| PlannedCommand {
                 dir: cwd.to_string(),
-                cmd: format!("git clone {} {}", url, name),
+                cmd: format!("git clone {url} {name}"),
                 env: None,
             })
             .collect();
@@ -767,7 +777,9 @@ the only commit message
     #[test]
     fn test_is_remote_command_clone() {
         assert!(super::is_remote_command("git clone"));
-        assert!(super::is_remote_command("git clone https://github.com/org/repo.git"));
+        assert!(super::is_remote_command(
+            "git clone https://github.com/org/repo.git"
+        ));
     }
 
     #[test]

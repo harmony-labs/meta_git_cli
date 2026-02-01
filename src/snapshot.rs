@@ -46,7 +46,11 @@ Use --force to skip confirmation on restore, --dry-run to preview."#,
 }
 
 /// Create a snapshot of the current workspace state
-pub(crate) fn execute_snapshot_create(args: &[String], projects: &[String], cwd: &Path) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_snapshot_create(
+    args: &[String],
+    projects: &[String],
+    cwd: &Path,
+) -> anyhow::Result<CommandResult> {
     // Parse snapshot name from args
     let name = args
         .iter()
@@ -97,23 +101,14 @@ pub(crate) fn execute_snapshot_create(args: &[String], projects: &[String], cwd:
             Some(Ok(state)) => {
                 if state.dirty {
                     dirty_count += 1;
-                    println!(
-                        "  {} {} (dirty)",
-                        style("○").yellow(),
-                        dir
-                    );
+                    println!("  {} {} (dirty)", style("○").yellow(), dir);
                 } else {
                     println!("  {} {}", style("✓").green(), dir);
                 }
                 repos.insert(dir.clone(), state.clone());
             }
             Some(Err(e)) => {
-                println!(
-                    "  {} {} (error: {})",
-                    style("✗").red(),
-                    dir,
-                    e
-                );
+                println!("  {} {} (error: {})", style("✗").red(), dir, e);
             }
         }
     }
@@ -128,7 +123,7 @@ pub(crate) fn execute_snapshot_create(args: &[String], projects: &[String], cwd:
         repos,
     };
 
-    snapshot::save_snapshot(&cwd, &snap)?;
+    snapshot::save_snapshot(cwd, &snap)?;
 
     println!();
     println!(
@@ -145,7 +140,7 @@ pub(crate) fn execute_snapshot_create(args: &[String], projects: &[String], cwd:
     }
     println!(
         "Snapshot saved: {}",
-        style(format!(".meta-snapshots/{}.json", name)).dim()
+        style(format!(".meta-snapshots/{name}.json")).dim()
     );
 
     Ok(CommandResult::Message(String::new()))
@@ -206,7 +201,7 @@ pub(crate) fn execute_snapshot_show(args: &[String], cwd: &Path) -> anyhow::Resu
         let branch_info = state
             .branch
             .as_ref()
-            .map(|b| format!(" -> {}", b))
+            .map(|b| format!(" -> {b}"))
             .unwrap_or_else(|| " (detached)".to_string());
 
         let dirty_marker = if state.dirty {
@@ -228,7 +223,12 @@ pub(crate) fn execute_snapshot_show(args: &[String], cwd: &Path) -> anyhow::Resu
 }
 
 /// Restore workspace to a snapshot state
-pub(crate) fn execute_snapshot_restore(args: &[String], _projects: &[String], dry_run: bool, cwd: &Path) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_snapshot_restore(
+    args: &[String],
+    _projects: &[String],
+    dry_run: bool,
+    cwd: &Path,
+) -> anyhow::Result<CommandResult> {
     // Parse args
     let mut name: Option<&str> = None;
     let mut force = false;
@@ -243,7 +243,9 @@ pub(crate) fn execute_snapshot_restore(args: &[String], _projects: &[String], dr
         }
     }
 
-    let name = name.ok_or_else(|| anyhow::anyhow!("Usage: meta git snapshot restore <name> [--force] [--dry-run]"))?;
+    let name = name.ok_or_else(|| {
+        anyhow::anyhow!("Usage: meta git snapshot restore <name> [--force] [--dry-run]")
+    })?;
 
     let snap = snapshot::load_snapshot(cwd, name)?;
 
@@ -342,12 +344,7 @@ pub(crate) fn execute_snapshot_restore(args: &[String], _projects: &[String], dr
             );
             success_count += 1;
         } else {
-            println!(
-                "  {} {} {}",
-                style("✗").red(),
-                repo_name,
-                result.message
-            );
+            println!("  {} {} {}", style("✗").red(), repo_name, result.message);
             fail_count += 1;
         }
     }
@@ -360,18 +357,17 @@ pub(crate) fn execute_snapshot_restore(args: &[String], _projects: &[String], dr
             style(fail_count).red()
         );
     } else {
-        println!(
-            "{} Restored {} repo(s)",
-            style("✓").green(),
-            success_count
-        );
+        println!("{} Restored {} repo(s)", style("✓").green(), success_count);
     }
 
     Ok(CommandResult::Message(String::new()))
 }
 
 /// Delete a snapshot
-pub(crate) fn execute_snapshot_delete(args: &[String], cwd: &Path) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_snapshot_delete(
+    args: &[String],
+    cwd: &Path,
+) -> anyhow::Result<CommandResult> {
     let name = args
         .iter()
         .find(|a| !a.starts_with('-'))

@@ -19,9 +19,7 @@ pub(crate) fn handle_list(_args: ListArgs, _verbose: bool, json: bool) -> Result
         if json {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&ListOutput {
-                    worktrees: vec![]
-                })?
+                serde_json::to_string_pretty(&ListOutput { worktrees: vec![] })?
             );
         } else {
             println!("No worktrees found.");
@@ -96,9 +94,7 @@ pub(crate) fn handle_list(_args: ListArgs, _verbose: bool, json: bool) -> Result
     if json {
         println!(
             "{}",
-            serde_json::to_string_pretty(&ListOutput {
-                worktrees: entries
-            })?
+            serde_json::to_string_pretty(&ListOutput { worktrees: entries })?
         );
     } else if entries.is_empty() {
         println!("No worktrees found.");

@@ -84,10 +84,7 @@ fn check_and_fix_remotes(cwd: &Path) {
     }
 
     if mismatches.is_empty() {
-        println!(
-            "{} All remote URLs match .meta config.",
-            style("✓").green()
-        );
+        println!("{} All remote URLs match .meta config.", style("✓").green());
         return;
     }
 
@@ -125,10 +122,7 @@ fn check_and_fix_remotes(cwd: &Path) {
     if input.trim().to_lowercase() != "y" {
         println!("Skipped. You can fix remotes manually with:");
         for m in &mismatches {
-            println!(
-                "  git -C {} remote set-url origin {}",
-                m.name, m.expected
-            );
+            println!("  git -C {} remote set-url origin {}", m.name, m.expected);
         }
         return;
     }
@@ -159,12 +153,7 @@ fn check_and_fix_remotes(cwd: &Path) {
                 );
             }
             Err(e) => {
-                println!(
-                    "  {} {} failed: {}",
-                    style("✗").red(),
-                    &m.name,
-                    e
-                );
+                println!("  {} {} failed: {}", style("✗").red(), &m.name, e);
             }
         }
     }
@@ -180,9 +169,7 @@ fn check_and_fix_remotes(cwd: &Path) {
 ///   control_persist: 300  # 5 minutes
 /// ```
 fn load_ssh_config(cwd: &Path) -> Option<meta_git_lib::SshConfig> {
-    let Some((config_path, _format)) = meta_cli::config::find_meta_config(cwd, None) else {
-        return None;
-    };
+    let (config_path, _format) = meta_cli::config::find_meta_config(cwd, None)?;
 
     // Read the config file
     let content = std::fs::read_to_string(&config_path).ok()?;

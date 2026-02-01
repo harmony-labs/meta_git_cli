@@ -3,7 +3,11 @@ use crate::helpers::get_project_directories_with_fallback;
 use meta_plugin_protocol::{CommandResult, PlannedCommand, PluginRequestOptions};
 use std::path::Path;
 
-pub(crate) fn execute_git_status(projects: &[String], options: &PluginRequestOptions, cwd: &Path) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_git_status(
+    projects: &[String],
+    options: &PluginRequestOptions,
+    cwd: &Path,
+) -> anyhow::Result<CommandResult> {
     // Return an execution plan - let loop_lib handle execution, dry-run, and JSON output
     // Use projects from meta_cli if available (enables --recursive), otherwise read local .meta
     let dirs = get_project_directories_with_fallback(projects, cwd)?;

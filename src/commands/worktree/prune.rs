@@ -32,16 +32,21 @@ fn create_prune_entry(
 /// share the same source project.
 fn check_repo_orphaned(
     entry: &WorktreeStoreEntry,
-    config_cache: &mut std::collections::HashMap<String, Option<Vec<meta_cli::config::ProjectInfo>>>,
+    config_cache: &mut std::collections::HashMap<
+        String,
+        Option<Vec<meta_cli::config::ProjectInfo>>,
+    >,
 ) -> Option<String> {
-    let config = config_cache.entry(entry.project.clone()).or_insert_with(|| {
-        let project_path = Path::new(&entry.project);
-        meta_cli::config::find_meta_config_in(project_path).and_then(|(meta_path, _)| {
-            meta_cli::config::parse_meta_config(&meta_path)
-                .ok()
-                .map(|(projects, _)| projects)
-        })
-    });
+    let config = config_cache
+        .entry(entry.project.clone())
+        .or_insert_with(|| {
+            let project_path = Path::new(&entry.project);
+            meta_cli::config::find_meta_config_in(project_path).and_then(|(meta_path, _)| {
+                meta_cli::config::parse_meta_config(&meta_path)
+                    .ok()
+                    .map(|(projects, _)| projects)
+            })
+        });
 
     let Some(projects) = config else {
         return None; // Can't check without config
@@ -60,7 +65,12 @@ fn check_repo_orphaned(
     }
 }
 
-pub(crate) fn handle_prune(args: PruneArgs, _verbose: bool, json: bool, strict: bool) -> Result<()> {
+pub(crate) fn handle_prune(
+    args: PruneArgs,
+    _verbose: bool,
+    json: bool,
+    strict: bool,
+) -> Result<()> {
     let dry_run = args.dry_run;
 
     let store: WorktreeStoreData = store_list()?;
@@ -81,8 +91,10 @@ pub(crate) fn handle_prune(args: PruneArgs, _verbose: bool, json: bool, strict: 
 
     let now = Utc::now().timestamp();
     let mut to_remove: Vec<PruneEntry> = Vec::new();
-    let mut config_cache: std::collections::HashMap<String, Option<Vec<meta_cli::config::ProjectInfo>>> =
-        std::collections::HashMap::new();
+    let mut config_cache: std::collections::HashMap<
+        String,
+        Option<Vec<meta_cli::config::ProjectInfo>>,
+    > = std::collections::HashMap::new();
 
     for (path_key, entry) in &store.worktrees {
         let wt_path = Path::new(path_key);
@@ -164,10 +176,7 @@ pub(crate) fn handle_prune(args: PruneArgs, _verbose: bool, json: bool, strict: 
         } else {
             println!("Would prune {} worktree(s):", to_remove.len());
             for entry in &to_remove {
-                println!(
-                    "  {} ({}) — {}",
-                    entry.name, entry.reason, entry.path
-                );
+                println!("  {} ({}) — {}", entry.name, entry.reason, entry.path);
             }
         }
         return Ok(());
@@ -216,16 +225,9 @@ pub(crate) fn handle_prune(args: PruneArgs, _verbose: bool, json: bool, strict: 
             })?
         );
     } else {
-        println!(
-            "{} Pruned {} worktree(s):",
-            "✓".green(),
-            removed.len()
-        );
+        println!("{} Pruned {} worktree(s):", "✓".green(), removed.len());
         for entry in &removed {
-            println!(
-                "  {} ({}) — {}",
-                entry.name, entry.reason, entry.path
-            );
+            println!("  {} ({}) — {}", entry.name, entry.reason, entry.path);
         }
     }
 
@@ -238,11 +240,7 @@ mod tests {
     use std::collections::HashMap;
     use tempfile::TempDir;
 
-    fn make_store_entry(
-        name: &str,
-        project: &str,
-        repos: Vec<(&str, &str)>,
-    ) -> WorktreeStoreEntry {
+    fn make_store_entry(name: &str, project: &str, repos: Vec<(&str, &str)>) -> WorktreeStoreEntry {
         WorktreeStoreEntry {
             name: name.to_string(),
             project: project.to_string(),
@@ -330,8 +328,7 @@ mod tests {
         let project_path = temp_dir.path();
 
         // Create .meta config with only repo3 (repos 1 and 2 are missing)
-        let meta_config =
-            r#"{"projects":{"repo3":"git@github.com:org/repo3.git"}}"#;
+        let meta_config = r#"{"projects":{"repo3":"git@github.com:org/repo3.git"}}"#;
         std::fs::write(project_path.join(".meta"), meta_config).unwrap();
 
         let entry = make_store_entry(

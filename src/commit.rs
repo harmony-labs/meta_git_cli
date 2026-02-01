@@ -4,7 +4,12 @@ use meta_plugin_protocol::{CommandResult, PlannedCommand, PluginRequestOptions};
 use std::process::Command;
 
 /// Execute git commit with optional --edit flag for per-repo messages
-pub(crate) fn execute_git_commit(args: &[String], projects: &[String], options: &PluginRequestOptions, cwd: &std::path::Path) -> anyhow::Result<CommandResult> {
+pub(crate) fn execute_git_commit(
+    args: &[String],
+    projects: &[String],
+    options: &PluginRequestOptions,
+    cwd: &std::path::Path,
+) -> anyhow::Result<CommandResult> {
     // Parse arguments
     let mut use_editor = false;
     let mut message: Option<String> = None;
@@ -36,7 +41,10 @@ pub(crate) fn execute_git_commit(args: &[String], projects: &[String], options: 
     } else {
         // Fall back to reading local meta config
         let Some((meta_path, _format)) = config::find_meta_config_in(cwd) else {
-            return Ok(CommandResult::Message(format!("No .meta config found in {}", cwd.display())));
+            return Ok(CommandResult::Message(format!(
+                "No .meta config found in {}",
+                cwd.display()
+            )));
         };
         let (projects, _) = config::parse_meta_config(&meta_path)?;
 
@@ -57,16 +65,14 @@ pub(crate) fn execute_git_commit(args: &[String], projects: &[String], options: 
 
         if path.exists() && has_staged_changes(&path.to_string_lossy()) {
             let staged = get_staged_files(&path.to_string_lossy());
-            repos_with_changes.push((
-                dir.clone(),
-                path.to_string_lossy().to_string(),
-                staged,
-            ));
+            repos_with_changes.push((dir.clone(), path.to_string_lossy().to_string(), staged));
         }
     }
 
     if repos_with_changes.is_empty() {
-        return Ok(CommandResult::Message("No staged changes found in any repository.".to_string()));
+        return Ok(CommandResult::Message(
+            "No staged changes found in any repository.".to_string(),
+        ));
     }
 
     if use_editor {
@@ -87,7 +93,7 @@ pub(crate) fn execute_git_commit(args: &[String], projects: &[String], options: 
                 };
                 PlannedCommand {
                     dir,
-                    cmd: format!("git commit -m '{}'", escaped_msg),
+                    cmd: format!("git commit -m '{escaped_msg}'"),
                     env: None,
                 }
             })

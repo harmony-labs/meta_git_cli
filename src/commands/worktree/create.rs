@@ -13,7 +13,12 @@ use meta_git_lib::worktree::types::{
 
 use super::cli_types::CreateArgs;
 
-pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool, global_strict: bool) -> Result<()> {
+pub(crate) fn handle_create(
+    args: CreateArgs,
+    verbose: bool,
+    json: bool,
+    global_strict: bool,
+) -> Result<()> {
     // Merge global --strict with local --strict (either enables strict mode)
     let strict = args.strict || global_strict;
 
@@ -33,7 +38,7 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool, global_
         } else {
             super::warn_or_bail(
                 strict,
-                format!("--meta value '{}' missing '=' separator (expected key=value), skipping", s),
+                format!("--meta value '{s}' missing '=' separator (expected key=value), skipping"),
             )?;
         }
     }
@@ -117,7 +122,7 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool, global_
                 if let Err(e) = git_fetch_branch(source, pr_branch) {
                     super::warn_or_bail(
                         strict,
-                        format!("Failed to fetch PR branch '{}': {}", pr_branch, e),
+                        format!("Failed to fetch PR branch '{pr_branch}': {e}"),
                     )?;
                 }
                 *branch = pr_branch.clone();
@@ -128,7 +133,7 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool, global_
         if !matched {
             super::warn_or_bail(
                 strict,
-                format!("No repo matches '{}'. PR branch '{}' not applied.", pr_repo_spec, pr_branch),
+                format!("No repo matches '{pr_repo_spec}'. PR branch '{pr_branch}' not applied."),
             )?;
         }
     }
@@ -140,10 +145,7 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool, global_
     // git worktree add creates the target dir, so we skip create_dir_all.
     let mut dot_created = false;
     if dot_included {
-        let (_, source, branch) = repos_to_create
-            .iter()
-            .find(|(a, _, _)| a == ".")
-            .unwrap();
+        let (_, source, branch) = repos_to_create.iter().find(|(a, _, _)| a == ".").unwrap();
 
         if verbose {
             eprintln!(
@@ -170,7 +172,7 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool, global_
             }
             Err(e) if from_ref.is_some() => {
                 // --from-ref: skip root repo if ref doesn't exist (same as child repos)
-                super::warn_or_bail(strict, format!("Skipping '.': {}", e))?;
+                super::warn_or_bail(strict, format!("Skipping '.': {e}"))?;
             }
             Err(e) => return Err(e),
         }
@@ -209,7 +211,7 @@ pub(crate) fn handle_create(args: CreateArgs, verbose: bool, json: bool, global_
             }
             Err(e) if from_ref.is_some() => {
                 // --from-ref: skip repos where ref doesn't exist
-                super::warn_or_bail(strict, format!("Skipping '{}': {}", alias, e))?;
+                super::warn_or_bail(strict, format!("Skipping '{alias}': {e}"))?;
                 continue;
             }
             Err(e) => return Err(e),

@@ -10,7 +10,12 @@ use meta_git_lib::worktree::types::*;
 
 use super::cli_types::DestroyArgs;
 
-pub(crate) fn handle_destroy(args: DestroyArgs, verbose: bool, json: bool, strict: bool) -> Result<()> {
+pub(crate) fn handle_destroy(
+    args: DestroyArgs,
+    verbose: bool,
+    json: bool,
+    strict: bool,
+) -> Result<()> {
     let name = &args.name;
     validate_worktree_name(name)?;
     let force = args.force;
@@ -68,11 +73,7 @@ pub(crate) fn handle_destroy(args: DestroyArgs, verbose: bool, json: bool, stric
         };
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
-        println!(
-            "{} Destroyed worktree '{}'",
-            "✓".green(),
-            name.bold()
-        );
+        println!("{} Destroyed worktree '{}'", "✓".green(), name.bold());
     }
     Ok(())
 }

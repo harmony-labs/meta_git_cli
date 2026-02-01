@@ -1,5 +1,5 @@
-use crate::clone_queue::CloneQueue;
 use crate::clone_queue::clone_with_queue;
+use crate::clone_queue::CloneQueue;
 use console::style;
 use indicatif::MultiProgress;
 use meta_cli::config;
@@ -8,8 +8,11 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub(crate) fn execute_git_update(projects: &[String], dry_run: bool, cwd: &std::path::Path) -> anyhow::Result<CommandResult> {
-
+pub(crate) fn execute_git_update(
+    projects: &[String],
+    dry_run: bool,
+    cwd: &std::path::Path,
+) -> anyhow::Result<CommandResult> {
     // Determine if we're in recursive mode (projects list provided by meta_cli)
     let recursive = !projects.is_empty();
 
@@ -53,7 +56,7 @@ pub(crate) fn execute_git_update(projects: &[String], dry_run: bool, cwd: &std::
                     // Check if it's a git repo and not in config
                     if path.join(".git").exists()
                         && !name.starts_with('.')
-                        && !config_projects.contains(&name.to_string())
+                        && !config_projects.contains(name)
                     {
                         let relative_path = if dir.as_path() == cwd {
                             name.to_string()
@@ -91,7 +94,11 @@ pub(crate) fn execute_git_update(projects: &[String], dry_run: bool, cwd: &std::
     }
 
     if dry_run {
-        println!("{} Would clone {} missing repositories:", style("[DRY RUN]").cyan(), initial_count);
+        println!(
+            "{} Would clone {} missing repositories:",
+            style("[DRY RUN]").cyan(),
+            initial_count
+        );
         let tasks = queue.drain_all();
         for task in tasks {
             println!("  git clone {} {}", task.url, task.target_path.display());
@@ -118,7 +125,7 @@ pub(crate) fn execute_git_update(projects: &[String], dry_run: bool, cwd: &std::
             total - initial_count
         );
     } else {
-        println!("Update completed ({} repos cloned)", completed);
+        println!("Update completed ({completed} repos cloned)");
     }
 
     Ok(CommandResult::Message(String::new()))

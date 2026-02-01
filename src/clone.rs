@@ -1,5 +1,5 @@
-use crate::clone_queue::CloneQueue;
 use crate::clone_queue::clone_with_queue;
+use crate::clone_queue::CloneQueue;
 use console::style;
 use indicatif::MultiProgress;
 use meta_cli::config;
@@ -7,8 +7,11 @@ use meta_plugin_protocol::CommandResult;
 use std::process::Command;
 use std::sync::Arc;
 
-pub(crate) fn execute_git_clone(args: &[String], dry_run: bool, cwd: &std::path::Path) -> anyhow::Result<CommandResult> {
-
+pub(crate) fn execute_git_clone(
+    args: &[String],
+    dry_run: bool,
+    cwd: &std::path::Path,
+) -> anyhow::Result<CommandResult> {
     // Default options - limit to 4 concurrent clones to avoid SSH multiplexing issues
     let mut recursive = false;
     let mut parallel = 4_usize;
@@ -68,7 +71,9 @@ pub(crate) fn execute_git_clone(args: &[String], dry_run: bool, cwd: &std::path:
     }
 
     if url.is_empty() {
-        return Ok(CommandResult::Error("No repository URL provided".to_string()));
+        return Ok(CommandResult::Error(
+            "No repository URL provided".to_string(),
+        ));
     }
 
     // Derive directory name
@@ -97,7 +102,7 @@ pub(crate) fn execute_git_clone(args: &[String], dry_run: bool, cwd: &std::path:
         // Output what we know - just the meta repo clone command
         // (Child repos are in .meta file which hasn't been cloned yet)
         println!("{} Would clone meta repository:", style("[DRY RUN]").cyan());
-        println!("  {}", clone_cmd_str);
+        println!("  {clone_cmd_str}");
         return Ok(CommandResult::Message(String::new()));
     }
 
@@ -110,13 +115,17 @@ pub(crate) fn execute_git_clone(args: &[String], dry_run: bool, cwd: &std::path:
     clone_cmd.current_dir(cwd);
     let status = clone_cmd.status()?;
     if !status.success() {
-        return Ok(CommandResult::Error("Failed to clone meta repository".to_string()));
+        return Ok(CommandResult::Error(
+            "Failed to clone meta repository".to_string(),
+        ));
     }
 
     // Parse meta config inside cloned repo
     let clone_dir_path = cwd.join(&clone_dir);
     if config::find_meta_config_in(&clone_dir_path).is_none() {
-        return Ok(CommandResult::Message("No .meta config found in cloned repository".to_string()));
+        return Ok(CommandResult::Message(
+            "No .meta config found in cloned repository".to_string(),
+        ));
     }
 
     // Create the clone queue with depth settings
@@ -128,7 +137,9 @@ pub(crate) fn execute_git_clone(args: &[String], dry_run: bool, cwd: &std::path:
     let initial_count = queue.push_from_meta(&clone_dir_path, 0)?;
 
     if initial_count == 0 {
-        return Ok(CommandResult::Message("No child repositories to clone".to_string()));
+        return Ok(CommandResult::Message(
+            "No child repositories to clone".to_string(),
+        ));
     }
 
     println!(
@@ -150,7 +161,7 @@ pub(crate) fn execute_git_clone(args: &[String], dry_run: bool, cwd: &std::path:
             total - initial_count
         );
     } else {
-        println!("Meta-repo clone completed ({} repos cloned)", completed);
+        println!("Meta-repo clone completed ({completed} repos cloned)");
     }
 
     Ok(CommandResult::Message(String::new()))

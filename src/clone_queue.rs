@@ -169,7 +169,6 @@ impl CloneQueue {
         let mut failed = self.failed.lock().unwrap_or_else(|e| e.into_inner());
         failed.insert(task.target_path.clone());
     }
-
 }
 
 /// Clone repositories using a worker pool where each worker continuously pulls from the queue
@@ -298,7 +297,7 @@ fn clone_single_repo(task: &CloneTask, queue: &Arc<CloneQueue>, pb: &ProgressBar
                     use std::io::{BufRead, BufReader};
                     let reader = BufReader::new(stderr);
                     for line in reader.lines().map_while(Result::ok) {
-                        pb_clone.set_message(format!("{}: {}", task_name, line));
+                        pb_clone.set_message(format!("{task_name}: {line}"));
                     }
                 });
             }
@@ -314,7 +313,10 @@ fn clone_single_repo(task: &CloneTask, queue: &Arc<CloneQueue>, pb: &ProgressBar
                                 style(format!("Cloned {} (+{} nested)", task.name, added)).green()
                             ));
                             // Update for new total
-                            debug!("Discovered {} more repos in {}, total now {}", added, task.name, total);
+                            debug!(
+                                "Discovered {} more repos in {}, total now {}",
+                                added, task.name, total
+                            );
                         }
                         Ok(_) => {
                             pb.finish_with_message(format!(
@@ -325,7 +327,8 @@ fn clone_single_repo(task: &CloneTask, queue: &Arc<CloneQueue>, pb: &ProgressBar
                         Err(e) => {
                             pb.finish_with_message(format!(
                                 "{}",
-                                style(format!("Cloned {} (meta parse error: {})", task.name, e)).yellow()
+                                style(format!("Cloned {} (meta parse error: {})", task.name, e))
+                                    .yellow()
                             ));
                         }
                     }

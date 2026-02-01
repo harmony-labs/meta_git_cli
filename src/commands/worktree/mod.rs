@@ -82,7 +82,9 @@ fn handle_worktree_command(
     match command {
         WorktreeCommands::Create(args) => create::handle_create(args, verbose, json, global_strict),
         WorktreeCommands::Add(args) => add::handle_add(args, verbose, json, global_strict),
-        WorktreeCommands::Destroy(args) => destroy::handle_destroy(args, verbose, json, global_strict),
+        WorktreeCommands::Destroy(args) => {
+            destroy::handle_destroy(args, verbose, json, global_strict)
+        }
         WorktreeCommands::List(args) => list::handle_list(args, verbose, json),
         WorktreeCommands::Status(args) => status::handle_status(args, verbose, json),
         WorktreeCommands::Diff(args) => diff::handle_diff(args, verbose, json),
@@ -110,7 +112,7 @@ fn handle_worktree_command(
 /// but strict mode should treat it as a failure.
 pub(crate) fn warn_or_bail(strict: bool, message: impl std::fmt::Display) -> anyhow::Result<()> {
     if strict {
-        anyhow::bail!("{} (strict mode)", message)
+        anyhow::bail!("{message} (strict mode)")
     } else {
         eprintln!("{} {}", "warning:".yellow().bold(), message);
         Ok(())
@@ -124,7 +126,7 @@ pub(crate) fn warn_or_bail(strict: bool, message: impl std::fmt::Display) -> any
 pub(crate) fn warn_store_error(result: anyhow::Result<()>, strict: bool) -> anyhow::Result<()> {
     match result {
         Ok(()) => Ok(()),
-        Err(e) => warn_or_bail(strict, format!("Failed to update store: {}", e)),
+        Err(e) => warn_or_bail(strict, format!("Failed to update store: {e}")),
     }
 }
 
@@ -155,16 +157,31 @@ fn write_worktree_help(w: &mut dyn std::io::Write) {
     let _ = writeln!(w);
     let _ = writeln!(w, "CREATE OPTIONS:");
     let _ = writeln!(w, "  --repo <ALIAS[:BRANCH]>  Add specific repo(s)");
-    let _ = writeln!(w, "  --all                    Add all repos from .meta config");
+    let _ = writeln!(
+        w,
+        "  --all                    Add all repos from .meta config"
+    );
     let _ = writeln!(w, "  --branch <NAME>          Override default branch name");
-    let _ = writeln!(w, "  --from-ref <REF>         Start from a specific tag/SHA");
-    let _ = writeln!(w, "  --from-pr <OWNER/REPO#N> Start from a PR's head branch");
+    let _ = writeln!(
+        w,
+        "  --from-ref <REF>         Start from a specific tag/SHA"
+    );
+    let _ = writeln!(
+        w,
+        "  --from-pr <OWNER/REPO#N> Start from a PR's head branch"
+    );
     let _ = writeln!(w, "  --ephemeral              Mark for automatic cleanup");
-    let _ = writeln!(w, "  --ttl <DURATION>         Time-to-live (30s, 5m, 1h, 2d, 1w)");
+    let _ = writeln!(
+        w,
+        "  --ttl <DURATION>         Time-to-live (30s, 5m, 1h, 2d, 1w)"
+    );
     let _ = writeln!(w, "  --meta <KEY=VALUE>       Store custom metadata");
     let _ = writeln!(w);
     let _ = writeln!(w, "DESTROY OPTIONS:");
-    let _ = writeln!(w, "  --force                  Remove even with uncommitted changes");
+    let _ = writeln!(
+        w,
+        "  --force                  Remove even with uncommitted changes"
+    );
     let _ = writeln!(w);
     let _ = writeln!(w, "EXEC OPTIONS:");
     let _ = writeln!(w, "  --include <REPOS>        Only run in specified repos");
@@ -173,7 +190,10 @@ fn write_worktree_help(w: &mut dyn std::io::Write) {
     let _ = writeln!(w, "  --ephemeral              Atomic create+exec+destroy");
     let _ = writeln!(w);
     let _ = writeln!(w, "DIFF OPTIONS:");
-    let _ = writeln!(w, "  --base <BRANCH>          Base branch for comparison (default: main)");
+    let _ = writeln!(
+        w,
+        "  --base <BRANCH>          Base branch for comparison (default: main)"
+    );
     let _ = writeln!(w, "  --stat                   Show diffstat summary only");
     let _ = writeln!(w);
     let _ = writeln!(w, "Use 'meta worktree <command> --help' for more details.");
