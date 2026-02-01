@@ -36,6 +36,7 @@ pub fn execute_command(
 ) -> CommandResult {
     debug!("[meta_git_cli] Plugin invoked with command: '{command}'");
     debug!("[meta_git_cli] Args: {args:?}");
+    debug!("[meta_git_cli] Options: parallel={}, dry_run={}, verbose={}", options.parallel, options.dry_run, options.verbose);
     debug!("[meta_git_cli] Projects from meta_cli: {projects:?}");
 
     // Worktree commands (meta worktree * and meta git worktree *)
