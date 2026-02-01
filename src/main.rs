@@ -83,6 +83,11 @@ fn main() {
         "worktree prune".to_string(),
         "Remove expired/orphaned worktrees".to_string(),
     );
+    // Root description for promoted top-level command
+    help_commands.insert(
+        "worktree".to_string(),
+        "Manage git worktrees across repos".to_string(),
+    );
 
     run_plugin(PluginDefinition {
         info: PluginInfo {
