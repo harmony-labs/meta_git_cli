@@ -67,8 +67,19 @@ pub fn execute_worktree_command(
             Err(e) => CommandResult::Error(format!("{e}")),
         },
         Err(e) => {
-            // Clap errors (help, version, parse errors)
-            CommandResult::ShowHelp(Some(e.to_string()))
+            // Clap treats --help and --version as "errors" with special ErrorKind
+            use clap::error::ErrorKind;
+            match e.kind() {
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
+                    // These are success cases - print and exit 0
+                    println!("{e}");
+                    CommandResult::ShowHelp(None)
+                }
+                _ => {
+                    // Actual parse errors
+                    CommandResult::ShowHelp(Some(e.to_string()))
+                }
+            }
         }
     }
 }
@@ -143,7 +154,7 @@ pub fn eprint_worktree_help() {
 fn write_worktree_help(w: &mut dyn std::io::Write) {
     let _ = writeln!(w, "Manage git worktrees across repos");
     let _ = writeln!(w);
-    let _ = writeln!(w, "USAGE: meta worktree <COMMAND> [OPTIONS]");
+    let _ = writeln!(w, "USAGE: meta git worktree <COMMAND> [OPTIONS]");
     let _ = writeln!(w);
     let _ = writeln!(w, "COMMANDS:");
     let _ = writeln!(w, "  create   Create a new worktree set");
@@ -196,7 +207,7 @@ fn write_worktree_help(w: &mut dyn std::io::Write) {
     );
     let _ = writeln!(w, "  --stat                   Show diffstat summary only");
     let _ = writeln!(w);
-    let _ = writeln!(w, "Use 'meta worktree <command> --help' for more details.");
+    let _ = writeln!(w, "Use 'meta git worktree <command> --help' for more details.");
 }
 
 #[cfg(test)]

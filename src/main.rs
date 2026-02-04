@@ -3,14 +3,14 @@
 //! Logging is handled by `run_plugin()` which initializes env_logger.
 //! Use RUST_LOG=meta_git_cli=debug for debug output.
 
+use indexmap::IndexMap;
 use meta_plugin_protocol::{
     run_plugin, CommandResult, PluginDefinition, PluginHelp, PluginInfo, PluginRequest,
 };
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 fn main() {
-    let mut help_commands = HashMap::new();
+    let mut help_commands = IndexMap::new();
     help_commands.insert(
         "clone".to_string(),
         "Clone a meta repository and all child repos".to_string(),
@@ -83,7 +83,6 @@ fn main() {
         "worktree prune".to_string(),
         "Remove expired/orphaned worktrees".to_string(),
     );
-    // Root description for promoted top-level command
     help_commands.insert(
         "worktree".to_string(),
         "Manage git worktrees across repos".to_string(),
@@ -105,15 +104,6 @@ fn main() {
                 "git snapshot show".to_string(),
                 "git snapshot restore".to_string(),
                 "git snapshot delete".to_string(),
-                "worktree".to_string(),
-                "worktree create".to_string(),
-                "worktree add".to_string(),
-                "worktree destroy".to_string(),
-                "worktree list".to_string(),
-                "worktree status".to_string(),
-                "worktree diff".to_string(),
-                "worktree exec".to_string(),
-                "worktree prune".to_string(),
                 "git worktree".to_string(),
                 "git worktree create".to_string(),
                 "git worktree add".to_string(),
@@ -136,10 +126,10 @@ fn main() {
                     "meta git commit -m \"Update all repos\"".to_string(),
                     "meta git snapshot create before-upgrade".to_string(),
                     "meta git snapshot restore before-upgrade".to_string(),
-                    "meta worktree create my-task --repo api --repo web".to_string(),
-                    "meta worktree list".to_string(),
-                    "meta worktree exec my-task -- cargo test".to_string(),
-                    "meta worktree destroy my-task".to_string(),
+                    "meta git worktree create my-task --repo api --repo web".to_string(),
+                    "meta git worktree list".to_string(),
+                    "meta git worktree exec my-task -- cargo test".to_string(),
+                    "meta git worktree destroy my-task".to_string(),
                 ],
                 note: Some(
                     "To run raw git commands across repos: meta exec -- git <command>".to_string(),
