@@ -207,7 +207,10 @@ fn write_worktree_help(w: &mut dyn std::io::Write) {
     );
     let _ = writeln!(w, "  --stat                   Show diffstat summary only");
     let _ = writeln!(w);
-    let _ = writeln!(w, "Use 'meta git worktree <command> --help' for more details.");
+    let _ = writeln!(
+        w,
+        "Use 'meta git worktree <command> --help' for more details."
+    );
 }
 
 #[cfg(test)]
