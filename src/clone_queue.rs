@@ -108,9 +108,14 @@ impl CloneQueue {
                 continue;
             }
 
+            // Skip projects without a repo URL (cannot clone)
+            let Some(url) = project.repo else {
+                continue;
+            };
+
             let task = CloneTask {
                 name: project.name,
-                url: project.repo,
+                url,
                 target_path,
                 depth_level,
             };

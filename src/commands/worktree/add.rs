@@ -31,8 +31,6 @@ pub(crate) fn handle_add(args: AddArgs, verbose: bool, json: bool, strict: bool)
         anyhow::bail!("Worktree '{}' not found at {}", name, wt_dir.display());
     }
 
-    let projects = load_projects(&meta_dir)?;
-
     // Check existing repos in the worktree
     let existing = discover_worktree_repos(&wt_dir)?;
 
@@ -42,11 +40,13 @@ pub(crate) fn handle_add(args: AddArgs, verbose: bool, json: bool, strict: bool)
             anyhow::bail!("Repo '{}' already exists in worktree '{name}'", spec.alias);
         }
 
-        let project = lookup_project(&projects, &spec.alias)?;
+        // Use recursive lookup for nested paths (containing '/')
+        let (source, _project) = lookup_nested_project(&meta_dir, &spec.alias)?;
 
-        let source = meta_dir.join(&project.path);
         let branch = resolve_branch(name, None, spec.branch.as_deref());
-        let dest = wt_dir.join(&spec.alias);
+        // Use the last component of the alias for the destination directory
+        let dest_name = spec.alias.rsplit('/').next().unwrap_or(&spec.alias);
+        let dest = wt_dir.join(dest_name);
 
         if verbose {
             eprintln!(

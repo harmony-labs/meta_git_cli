@@ -64,6 +64,11 @@ fn check_and_fix_remotes(cwd: &Path) {
     let mut mismatches = Vec::new();
 
     for project in &projects {
+        // Skip projects without a repo URL
+        let Some(expected_url) = &project.repo else {
+            continue;
+        };
+
         let repo_path = cwd.join(&project.path);
         if !repo_path.join(".git").exists() && !repo_path.exists() {
             // Not cloned yet — skip gracefully
@@ -74,10 +79,10 @@ fn check_and_fix_remotes(cwd: &Path) {
             continue;
         };
 
-        if !meta_git_lib::urls_match(&actual_url, &project.repo) {
+        if !meta_git_lib::urls_match(&actual_url, expected_url) {
             mismatches.push(RemoteMismatch {
                 name: project.name.clone(),
-                expected: project.repo.clone(),
+                expected: expected_url.clone(),
                 actual: actual_url,
             });
         }
@@ -195,7 +200,8 @@ pub fn discover_ssh_hosts(cwd: &Path) -> Vec<String> {
 
     let hosts: BTreeSet<String> = projects
         .iter()
-        .filter_map(|p| meta_git_lib::extract_ssh_host(&p.repo))
+        .filter_map(|p| p.repo.as_ref())
+        .filter_map(|repo| meta_git_lib::extract_ssh_host(repo))
         .collect();
 
     if hosts.is_empty() {

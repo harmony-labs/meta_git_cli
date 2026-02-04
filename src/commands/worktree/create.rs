@@ -101,10 +101,11 @@ pub(crate) fn handle_create(
                     resolve_branch(name, branch_flag, spec.branch.as_deref()),
                 ));
             } else {
-                let project = lookup_project(&projects, &spec.alias)?;
+                // Use recursive lookup for nested paths (containing '/')
+                let (source, _project) = lookup_nested_project(&meta_dir, &spec.alias)?;
                 list.push((
                     spec.alias.clone(),
-                    meta_dir.join(&project.path),
+                    source,
                     resolve_branch(name, branch_flag, spec.branch.as_deref()),
                 ));
             }
@@ -189,7 +190,10 @@ pub(crate) fn handle_create(
             continue;
         }
 
-        let dest = wt_dir.join(alias);
+        // Use the last component of the alias for the destination directory
+        // e.g., "vendor/nested-lib" -> "nested-lib"
+        let dest_name = alias.rsplit('/').next().unwrap_or(alias);
+        let dest = wt_dir.join(dest_name);
 
         if verbose {
             eprintln!(
