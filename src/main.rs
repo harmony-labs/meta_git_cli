@@ -10,82 +10,49 @@ use meta_plugin_protocol::{
 use std::path::PathBuf;
 
 fn main() {
-    let mut help_commands = IndexMap::new();
-    help_commands.insert(
+    // Build command sections for help display
+    let mut command_sections = IndexMap::new();
+
+    // Adapted Commands - meta-specific behavior that differs from plain git
+    let mut adapted = IndexMap::new();
+    adapted.insert(
         "clone".to_string(),
-        "Clone a meta repository and all child repos".to_string(),
+        "Clone a meta repo and all child repos recursively".to_string(),
     );
-    help_commands.insert(
-        "status".to_string(),
-        "Show git status for all repos".to_string(),
+    adapted.insert(
+        "commit".to_string(),
+        "Commit changes with optional per-repo messages".to_string(),
     );
-    help_commands.insert(
+    adapted.insert(
         "update".to_string(),
-        "Pull latest changes and clone missing repos".to_string(),
+        "Pull existing repos and clone any missing repos".to_string(),
     );
-    help_commands.insert(
+    adapted.insert(
+        "snapshot".to_string(),
+        "Save and restore workspace state across all repos".to_string(),
+    );
+    adapted.insert(
+        "worktree".to_string(),
+        "Create isolated worktree sets for multi-repo branches".to_string(),
+    );
+    adapted.insert(
         "setup-ssh".to_string(),
         "Configure SSH multiplexing for faster operations".to_string(),
     );
-    help_commands.insert(
-        "commit".to_string(),
-        "Commit changes with per-repo messages".to_string(),
+    command_sections.insert(
+        "Adapted Commands (meta-specific behavior)".to_string(),
+        adapted,
     );
-    help_commands.insert(
-        "snapshot create".to_string(),
-        "Create a snapshot of all repos' git state".to_string(),
+
+    // Pass-through Commands - runs git command in each repo
+    let mut passthrough = IndexMap::new();
+    passthrough.insert(
+        "status".to_string(),
+        "Show git status across all repos".to_string(),
     );
-    help_commands.insert(
-        "snapshot list".to_string(),
-        "List all available snapshots".to_string(),
-    );
-    help_commands.insert(
-        "snapshot show".to_string(),
-        "Show details of a snapshot".to_string(),
-    );
-    help_commands.insert(
-        "snapshot restore".to_string(),
-        "Restore all repos to a snapshot state".to_string(),
-    );
-    help_commands.insert(
-        "snapshot delete".to_string(),
-        "Delete a snapshot".to_string(),
-    );
-    help_commands.insert(
-        "worktree create".to_string(),
-        "Create a new worktree set".to_string(),
-    );
-    help_commands.insert(
-        "worktree add".to_string(),
-        "Add a repo to an existing worktree set".to_string(),
-    );
-    help_commands.insert(
-        "worktree destroy".to_string(),
-        "Remove a worktree set".to_string(),
-    );
-    help_commands.insert(
-        "worktree list".to_string(),
-        "List all worktree sets".to_string(),
-    );
-    help_commands.insert(
-        "worktree status".to_string(),
-        "Show status of a worktree set".to_string(),
-    );
-    help_commands.insert(
-        "worktree diff".to_string(),
-        "Show cross-repo diff vs base branch".to_string(),
-    );
-    help_commands.insert(
-        "worktree exec".to_string(),
-        "Run a command across worktree repos".to_string(),
-    );
-    help_commands.insert(
-        "worktree prune".to_string(),
-        "Remove expired/orphaned worktrees".to_string(),
-    );
-    help_commands.insert(
-        "worktree".to_string(),
-        "Manage git worktrees across repos".to_string(),
+    command_sections.insert(
+        "Pass-through Commands (runs git command in each repo)".to_string(),
+        passthrough,
     );
 
     run_plugin(PluginDefinition {
@@ -116,23 +83,20 @@ fn main() {
             ],
             description: Some("Git operations for meta repositories".to_string()),
             help: Some(PluginHelp {
-                usage: "meta git <command> [args...]".to_string(),
-                commands: help_commands,
+                usage: "meta git - Git operations for multi-repo workspaces\n\nUsage: meta git <COMMAND> [OPTIONS]".to_string(),
+                commands: IndexMap::new(), // Using command_sections instead
+                command_sections,
                 examples: vec![
                     "meta git clone https://github.com/org/meta-repo.git".to_string(),
                     "meta git status".to_string(),
-                    "meta git update".to_string(),
-                    "meta git commit --edit".to_string(),
                     "meta git commit -m \"Update all repos\"".to_string(),
-                    "meta git snapshot create before-upgrade".to_string(),
-                    "meta git snapshot restore before-upgrade".to_string(),
-                    "meta git worktree create my-task --repo api --repo web".to_string(),
-                    "meta git worktree list".to_string(),
-                    "meta git worktree exec my-task -- cargo test".to_string(),
-                    "meta git worktree destroy my-task".to_string(),
+                    "meta git commit --edit              # Per-repo messages".to_string(),
+                    "meta git snapshot create before-refactor".to_string(),
+                    "meta git snapshot restore before-refactor".to_string(),
+                    "meta git worktree create feature-x --repo api --repo web".to_string(),
                 ],
                 note: Some(
-                    "To run raw git commands across repos: meta exec -- git <command>".to_string(),
+                    "For git commands not listed above, use: meta exec -- git <command>".to_string(),
                 ),
             }),
         },
