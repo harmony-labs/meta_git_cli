@@ -138,12 +138,17 @@ fn execute_raw_git_command(
         // Limit parallelism to avoid exceeding this and triggering mux warnings.
         const SSH_MAX_SESSIONS: usize = 10;
 
+        // Stagger spawns by 25ms to prevent SSH socket saturation.
+        // With 13 repos, this spreads connection attempts over ~325ms.
+        const SSH_SPAWN_STAGGER_MS: u64 = 25;
+
         CommandResult::FullPlan(ExecutionPlan {
             pre_commands,
             commands,
             post_commands: vec![],
             parallel: Some(true),
             max_parallel: Some(SSH_MAX_SESSIONS),
+            spawn_stagger_ms: Some(SSH_SPAWN_STAGGER_MS),
         })
     } else {
         CommandResult::Plan(commands, Some(options.parallel))
@@ -454,6 +459,7 @@ the only commit message
             post_commands: vec![],
             parallel: Some(false),
             max_parallel: None,
+            spawn_stagger_ms: None,
         };
 
         let json = serde_json::to_string(&plan).unwrap();
@@ -474,12 +480,14 @@ the only commit message
             post_commands: vec![],
             parallel: None,
             max_parallel: None,
+            spawn_stagger_ms: None,
         };
 
         let json = serde_json::to_string(&plan).unwrap();
         // parallel and max_parallel should be omitted when None due to skip_serializing_if
         assert!(!json.contains("parallel"));
         assert!(!json.contains("max_parallel"));
+        assert!(!json.contains("spawn_stagger_ms"));
     }
 
     #[test]
@@ -508,6 +516,7 @@ the only commit message
                 post_commands: vec![],
                 parallel: Some(true),
                 max_parallel: None,
+                spawn_stagger_ms: None,
             },
         };
 
@@ -540,6 +549,7 @@ the only commit message
                 post_commands: vec![],
                 parallel: Some(false),
                 max_parallel: None,
+                spawn_stagger_ms: None,
             },
         };
 
@@ -565,6 +575,7 @@ the only commit message
             post_commands: vec![],
             parallel: None,
             max_parallel: None,
+            spawn_stagger_ms: None,
         };
 
         let json = serde_json::to_string(&plan).unwrap();
@@ -614,6 +625,7 @@ the only commit message
             post_commands: vec![],
             parallel: Some(true),
             max_parallel: None,
+            spawn_stagger_ms: None,
         };
 
         let json = serde_json::to_string(&plan).unwrap();
@@ -706,6 +718,7 @@ the only commit message
                 post_commands: vec![],
                 parallel: Some(false),
                 max_parallel: None,
+                spawn_stagger_ms: None,
             },
         };
 
@@ -743,6 +756,7 @@ the only commit message
                 post_commands: vec![],
                 parallel: Some(false),
                 max_parallel: None,
+                spawn_stagger_ms: None,
             },
         };
 
@@ -810,14 +824,17 @@ the only commit message
             post_commands: vec![],
             parallel: Some(true),
             max_parallel: Some(10),
+            spawn_stagger_ms: Some(25),
         };
 
         let json = serde_json::to_string(&plan).unwrap();
         assert!(json.contains("\"max_parallel\":10"));
+        assert!(json.contains("\"spawn_stagger_ms\":25"));
 
         // Verify round-trip
         let restored: ExecutionPlan = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.max_parallel, Some(10));
+        assert_eq!(restored.spawn_stagger_ms, Some(25));
     }
 
     #[test]
@@ -832,10 +849,12 @@ the only commit message
             post_commands: vec![],
             parallel: Some(true),
             max_parallel: None,
+            spawn_stagger_ms: None,
         };
 
         let json = serde_json::to_string(&plan).unwrap();
-        // max_parallel should be omitted when None due to skip_serializing_if
+        // max_parallel and spawn_stagger_ms should be omitted when None due to skip_serializing_if
         assert!(!json.contains("max_parallel"));
+        assert!(!json.contains("spawn_stagger_ms"));
     }
 }
