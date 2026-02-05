@@ -90,12 +90,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-        with:
-          path: meta_git_cli
-
-      - name: Create workspace root
-        run: |
-          printf '[workspace]\nmembers = ["meta_git_cli"]\nresolver = "2"\n\n[workspace.package]\nversion = "0.0.0"\nedition = "2021"\nlicense = "MIT"\nrepository = "https://github.com/harmony-labs/meta"\n' > Cargo.toml
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -103,5 +97,5 @@ jobs:
           components: rustfmt
 
       - name: Check formatting
-        working-directory: meta_git_cli
-        run: cargo fmt --all -- --check
+        run: |
+          find src -name '*.rs' -exec rustfmt --check {} +
