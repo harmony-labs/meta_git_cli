@@ -1,8 +1,9 @@
 use anyhow::Result;
 use chrono::Utc;
 use colored::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use meta_cli::dependency_graph::DependencyGraph;
 use meta_git_lib::worktree::git_ops::*;
 use meta_git_lib::worktree::helpers::*;
 use meta_git_lib::worktree::hooks::fire_post_create;
@@ -53,6 +54,8 @@ pub(crate) fn handle_create(
     // Resolve --from-pr: get PR head branch and identify matching repo
     let from_pr_info = from_pr_spec.map(resolve_from_pr).transpose()?;
 
+    let no_deps = args.no_deps;
+
     if repo_specs.is_empty() && !use_all {
         anyhow::bail!("Specify repos with --repo <alias> or use --all");
     }
@@ -91,7 +94,8 @@ pub(crate) fn handle_create(
                 )
             })
             .collect()
-    } else {
+    } else if no_deps {
+        // --no-deps: only include explicitly specified repos (legacy behavior)
         let mut list = Vec::new();
         for spec in repo_specs {
             if spec.alias == "." {
@@ -101,7 +105,6 @@ pub(crate) fn handle_create(
                     resolve_branch(name, branch_flag, spec.branch.as_deref()),
                 ));
             } else {
-                // Use recursive lookup for nested paths (containing '/')
                 let (source, _project) = lookup_nested_project(&meta_dir, &spec.alias)?;
                 list.push((
                     spec.alias.clone(),
@@ -111,6 +114,16 @@ pub(crate) fn handle_create(
             }
         }
         list
+    } else {
+        // Default: auto-include root repo + resolve dependencies
+        resolve_repos_with_dependencies(
+            &meta_dir,
+            &projects,
+            repo_specs,
+            name,
+            branch_flag,
+            verbose,
+        )?
     };
 
     // Apply --from-pr: override branch for the matching repo and fetch
@@ -286,4 +299,92 @@ pub(crate) fn handle_create(
     }
 
     Ok(())
+}
+
+/// Resolve repos with automatic dependency resolution.
+///
+/// When --repo is specified without --no-deps:
+/// 1. Always includes root repo "." (contains workspace Cargo.toml)
+/// 2. Resolves transitive dependencies via provides/depends_on from .meta.yaml
+fn resolve_repos_with_dependencies(
+    meta_dir: &std::path::Path,
+    projects: &[meta_cli::config::ProjectInfo],
+    repo_specs: &[meta_git_lib::worktree::RepoSpec],
+    worktree_name: &str,
+    branch_flag: Option<&str>,
+    verbose: bool,
+) -> Result<Vec<(String, std::path::PathBuf, String)>> {
+    // Build dependency graph from projects
+    let project_deps: Vec<_> = projects.iter().map(|p| p.to_dependencies()).collect();
+    let graph = DependencyGraph::build(project_deps)?;
+
+    // Collect all repos to include (using HashSet for deduplication)
+    let mut repos_to_include: HashSet<String> = HashSet::new();
+
+    // Always include root repo "." unless user explicitly excluded it
+    // (exclusion would need to be handled separately, for now always include)
+    if meta_dir.join(".git").exists() {
+        repos_to_include.insert(".".to_string());
+    }
+
+    // For each explicitly requested repo, add it and its transitive dependencies
+    for spec in repo_specs {
+        if spec.alias == "." {
+            repos_to_include.insert(".".to_string());
+            continue;
+        }
+
+        // Add the explicitly requested repo
+        repos_to_include.insert(spec.alias.clone());
+
+        // Get transitive dependencies
+        let deps = graph.get_all_dependencies(&spec.alias);
+        log::debug!(
+            "Resolved transitive dependencies for '{}': {:?}",
+            spec.alias,
+            deps
+        );
+        for dep in deps {
+            repos_to_include.insert(dep.to_string());
+            if verbose {
+                eprintln!("  Including '{}' (dependency of '{}')", dep, spec.alias);
+            }
+        }
+    }
+
+    // Build the final list with paths and branches
+    let mut list = Vec::new();
+
+    // Add root repo first if included
+    if repos_to_include.contains(".") {
+        let per_branch = repo_specs
+            .iter()
+            .find(|r| r.alias == ".")
+            .and_then(|r| r.branch.as_deref());
+        list.push((
+            ".".to_string(),
+            meta_dir.to_path_buf(),
+            resolve_branch(worktree_name, branch_flag, per_branch),
+        ));
+    }
+
+    // Add other repos
+    for alias in &repos_to_include {
+        if alias == "." {
+            continue;
+        }
+
+        let (source, _project) = lookup_nested_project(meta_dir, alias)?;
+        let per_branch = repo_specs
+            .iter()
+            .find(|r| r.alias == *alias)
+            .and_then(|r| r.branch.as_deref());
+        list.push((
+            alias.clone(),
+            source,
+            resolve_branch(worktree_name, branch_flag, per_branch),
+        ));
+    }
+
+    Ok(list)
 }

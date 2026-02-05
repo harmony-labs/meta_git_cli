@@ -73,6 +73,14 @@ pub struct CreateArgs {
     /// Useful in CI/automation where you want all-or-nothing behavior.
     #[arg(long)]
     pub strict: bool,
+
+    /// Skip automatic dependency resolution
+    ///
+    /// By default, worktree create includes the root repo and resolves
+    /// dependencies via provides/depends_on from .meta.yaml.
+    /// Use --no-deps to include only explicitly specified repos.
+    #[arg(long)]
+    pub no_deps: bool,
 }
 
 #[derive(Args)]

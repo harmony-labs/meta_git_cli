@@ -126,7 +126,8 @@ fn handle_ephemeral_exec(args: ExecArgs, verbose: bool, json: bool) -> Result<()
         ephemeral: true,
         ttl: None,
         custom_meta: args.custom_meta,
-        strict: false, // Exec creates ephemeral worktrees, don't fail on skipped repos
+        strict: false,  // Exec creates ephemeral worktrees, don't fail on skipped repos
+        no_deps: false, // Include dependencies by default
     };
 
     if verbose {
