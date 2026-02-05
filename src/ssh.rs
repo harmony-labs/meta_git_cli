@@ -119,10 +119,10 @@ fn check_and_fix_remotes(cwd: &Path) {
     );
     io::stdout().flush().ok();
 
-    let mut input = String::new();
-    if io::stdin().read_line(&mut input).is_err() {
-        return;
-    }
+    let input = match meta_git_lib::read_line_from_tty() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
 
     if input.trim().to_lowercase() != "y" {
         println!("Skipped. You can fix remotes manually with:");
