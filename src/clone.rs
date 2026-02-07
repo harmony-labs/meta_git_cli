@@ -3,19 +3,22 @@ use crate::clone_queue::CloneQueue;
 use console::style;
 use indicatif::MultiProgress;
 use meta_cli::config;
-use meta_plugin_protocol::CommandResult;
+use meta_plugin_protocol::{CommandResult, PluginRequestOptions};
 use std::process::Command;
 use std::sync::Arc;
 
 pub(crate) fn execute_git_clone(
     args: &[String],
-    dry_run: bool,
+    options: &PluginRequestOptions,
     cwd: &std::path::Path,
 ) -> anyhow::Result<CommandResult> {
+    let dry_run = options.dry_run;
+
     // Default options - limit to 4 concurrent clones to avoid SSH multiplexing issues
-    let mut recursive = false;
+    // Start with --recursive from CLI options (passed via PluginRequestOptions)
+    let mut recursive = options.recursive;
     let mut parallel = 4_usize;
-    let mut depth: Option<String> = None;
+    let mut depth: Option<String> = options.depth.map(|d| d.to_string());
     let mut meta_depth: Option<usize> = None; // Limit recursion depth for nested .meta files
 
     let mut url = String::new();
@@ -74,6 +77,14 @@ pub(crate) fn execute_git_clone(
         return Ok(CommandResult::Error(
             "No repository URL provided".to_string(),
         ));
+    }
+
+    // If depth was set from options but not added to git_clone_args yet, add it now
+    if let Some(ref d) = depth {
+        if !git_clone_args.contains(&"--depth".to_string()) {
+            git_clone_args.push("--depth".to_string());
+            git_clone_args.push(d.clone());
+        }
     }
 
     // Derive directory name

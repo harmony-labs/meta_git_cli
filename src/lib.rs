@@ -37,8 +37,8 @@ pub fn execute_command(
     debug!("[meta_git_cli] Plugin invoked with command: '{command}'");
     debug!("[meta_git_cli] Args: {args:?}");
     debug!(
-        "[meta_git_cli] Options: parallel={}, dry_run={}, verbose={}",
-        options.parallel, options.dry_run, options.verbose
+        "[meta_git_cli] Options: parallel={}, dry_run={}, verbose={}, recursive={}, depth={:?}",
+        options.parallel, options.dry_run, options.verbose, options.recursive, options.depth
     );
     debug!("[meta_git_cli] Projects from meta_cli: {projects:?}");
 
@@ -61,7 +61,7 @@ pub fn execute_command(
 
     let result = match command {
         "git status" => status::execute_git_status(projects, options, cwd),
-        "git clone" => clone::execute_git_clone(args, options.dry_run, cwd),
+        "git clone" => clone::execute_git_clone(args, options, cwd),
         "git update" => update::execute_git_update(projects, options.dry_run, cwd),
         "git setup-ssh" => ssh::execute_git_setup_ssh(cwd),
         "git commit" => commit::execute_git_commit(args, projects, options, cwd),
