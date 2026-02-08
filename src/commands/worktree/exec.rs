@@ -118,6 +118,7 @@ fn handle_ephemeral_exec(args: ExecArgs, verbose: bool, json: bool) -> Result<()
     // Build CreateArgs from the exec args
     let create_args = CreateArgs {
         name: name.clone(),
+        commit_ish: args.commit_ish,
         branch: args.branch,
         repos: args.repos,
         all: args.all,
