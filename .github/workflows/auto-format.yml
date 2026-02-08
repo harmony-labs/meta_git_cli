@@ -24,21 +24,36 @@ jobs:
       (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository) &&
       github.actor != 'github-actions[bot]'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.head_ref || github.ref_name }}
+          path: meta_git_cli
           # Use PAT to trigger downstream workflows; fallback to GITHUB_TOKEN
           token: ${{ secrets.PARENT_REPO_PAT || github.token }}
+
+      - name: Clone dependencies
+        run: |
+          git clone --depth 1 https://github.com/harmony-labs/meta_plugin_protocol.git
+          git clone --depth 1 https://github.com/harmony-labs/meta_git_lib.git
+          git clone --depth 1 https://github.com/harmony-labs/meta_cli.git
+          git clone --depth 1 https://github.com/harmony-labs/meta_core.git
+          git clone --depth 1 https://github.com/harmony-labs/loop_lib.git
+
+      - name: Create workspace root
+        run: |
+          printf '[workspace]\nmembers = ["meta_git_cli"]\nresolver = "2"\n\n[workspace.package]\nversion = "0.0.0"\nedition = "2021"\nlicense = "MIT"\nrepository = "https://github.com/harmony-labs/meta"\n' > Cargo.toml
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
 
       - name: Run cargo fmt
+        working-directory: meta_git_cli
         run: cargo fmt --all
 
       - name: Check for changes
         id: changes
+        working-directory: meta_git_cli
         run: |
           if git diff --quiet; then
             echo "formatted=false" >> $GITHUB_OUTPUT
@@ -48,6 +63,7 @@ jobs:
 
       - name: Commit and push
         if: steps.changes.outputs.formatted == 'true'
+        working-directory: meta_git_cli
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
