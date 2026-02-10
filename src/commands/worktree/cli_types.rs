@@ -30,8 +30,12 @@ pub enum WorktreeCommands {
 
 #[derive(Args)]
 pub struct CreateArgs {
+    // NOTE: Positional arg order matters — name then commit_ish must stay in this order.
     /// Worktree name
     pub name: String,
+
+    /// Start from a specific commit-ish (tag, SHA, branch)
+    pub commit_ish: Option<String>,
 
     /// Override default branch name
     #[arg(long)]
@@ -45,12 +49,12 @@ pub struct CreateArgs {
     #[arg(long, conflicts_with = "repos")]
     pub all: bool,
 
-    /// Start from a specific tag/SHA
-    #[arg(long, value_name = "REF")]
+    /// Alias for positional <COMMIT-ISH> (hidden, kept for backward compatibility)
+    #[arg(long, value_name = "REF", hide = true, conflicts_with_all = ["commit_ish", "from_pr"])]
     pub from_ref: Option<String>,
 
     /// Start from a PR's head branch (owner/repo#N)
-    #[arg(long, value_name = "OWNER/REPO#N")]
+    #[arg(long, value_name = "OWNER/REPO#N", conflicts_with = "commit_ish")]
     pub from_pr: Option<String>,
 
     /// Mark for automatic cleanup
@@ -65,9 +69,9 @@ pub struct CreateArgs {
     #[arg(long = "meta", value_name = "KEY=VALUE")]
     pub custom_meta: Vec<String>,
 
-    /// Fail if --from-ref doesn't exist in all repos (errors instead of warnings)
+    /// Fail if commit-ish doesn't exist in all repos (errors instead of warnings)
     ///
-    /// When using --from-ref to start worktrees from a specific tag/SHA/branch,
+    /// When starting worktrees from a specific tag/SHA/branch,
     /// repos that don't have that ref are normally skipped with a warning.
     /// With --strict, missing refs cause the entire operation to fail instead.
     /// Useful in CI/automation where you want all-or-nothing behavior.
@@ -128,8 +132,12 @@ pub struct DiffArgs {
 
 #[derive(Args)]
 pub struct ExecArgs {
+    // NOTE: Positional arg order matters — name, commit_ish, command must stay in this order.
     /// Worktree name
     pub name: String,
+
+    /// Start from a specific commit-ish (ephemeral only)
+    pub commit_ish: Option<String>,
 
     /// Only run in specified repos (comma-separated)
     #[arg(long, value_delimiter = ',')]
@@ -160,12 +168,12 @@ pub struct ExecArgs {
     #[arg(long = "meta", value_name = "KEY=VALUE")]
     pub custom_meta: Vec<String>,
 
-    /// Start from a specific tag/SHA (ephemeral only)
-    #[arg(long, value_name = "REF")]
+    /// Alias for positional <COMMIT-ISH> (hidden, kept for backward compatibility)
+    #[arg(long, value_name = "REF", hide = true, conflicts_with_all = ["commit_ish", "from_pr"])]
     pub from_ref: Option<String>,
 
     /// Start from a PR's head branch (ephemeral only, owner/repo#N)
-    #[arg(long, value_name = "OWNER/REPO#N")]
+    #[arg(long, value_name = "OWNER/REPO#N", conflicts_with = "commit_ish")]
     pub from_pr: Option<String>,
 
     /// Override branch name for ephemeral worktree

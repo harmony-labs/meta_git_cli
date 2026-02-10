@@ -43,12 +43,19 @@ pub(crate) fn handle_create(
             )?;
         }
     }
-    let from_ref = args.from_ref.as_deref();
+    // Merge positional <commit-ish> with hidden --from-ref (clap prevents both)
+    if args.from_ref.is_some() {
+        log::warn!(
+            "--from-ref is deprecated; use positional: meta worktree create <name> <commit-ish>"
+        );
+    }
+    let from_ref_merged = args.commit_ish.or(args.from_ref);
+    let from_ref = from_ref_merged.as_deref();
     let from_pr_spec = args.from_pr.as_deref();
 
-    // Check mutual exclusion of --from-ref and --from-pr
+    // Belt-and-suspenders: clap enforces conflicts, but guard against programmatic construction
     if from_ref.is_some() && from_pr_spec.is_some() {
-        anyhow::bail!("--from-ref and --from-pr are mutually exclusive");
+        anyhow::bail!("Cannot specify both a commit-ish and --from-pr");
     }
 
     // Resolve --from-pr: get PR head branch and identify matching repo
