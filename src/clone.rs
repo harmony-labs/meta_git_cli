@@ -1,8 +1,8 @@
 use crate::clone_worker::clone_with_queue;
-use meta_git_lib::clone_queue::CloneQueue;
 use console::style;
 use indicatif::MultiProgress;
 use meta_core::config;
+use meta_git_lib::clone_queue::CloneQueue;
 use meta_plugin_protocol::{CommandResult, PluginRequestOptions};
 use std::process::Command;
 use std::sync::Arc;
