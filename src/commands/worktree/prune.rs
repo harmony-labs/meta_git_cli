@@ -34,15 +34,15 @@ fn check_repo_orphaned(
     entry: &WorktreeStoreEntry,
     config_cache: &mut std::collections::HashMap<
         String,
-        Option<Vec<meta_cli::config::ProjectInfo>>,
+        Option<Vec<meta_core::config::ProjectInfo>>,
     >,
 ) -> Option<String> {
     let config = config_cache
         .entry(entry.project.clone())
         .or_insert_with(|| {
             let project_path = Path::new(&entry.project);
-            meta_cli::config::find_meta_config_in(project_path).and_then(|(meta_path, _)| {
-                meta_cli::config::parse_meta_config(&meta_path)
+            meta_core::config::find_meta_config_in(project_path).and_then(|(meta_path, _)| {
+                meta_core::config::parse_meta_config(&meta_path)
                     .ok()
                     .map(|(projects, _)| projects)
             })
@@ -93,7 +93,7 @@ pub(crate) fn handle_prune(
     let mut to_remove: Vec<PruneEntry> = Vec::new();
     let mut config_cache: std::collections::HashMap<
         String,
-        Option<Vec<meta_cli::config::ProjectInfo>>,
+        Option<Vec<meta_core::config::ProjectInfo>>,
     > = std::collections::HashMap::new();
 
     for (path_key, entry) in &store.worktrees {

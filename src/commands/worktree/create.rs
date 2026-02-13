@@ -315,14 +315,14 @@ pub(crate) fn handle_create(
 /// 2. Resolves transitive dependencies via provides/depends_on from .meta.yaml
 fn resolve_repos_with_dependencies(
     meta_dir: &std::path::Path,
-    projects: &[meta_cli::config::ProjectInfo],
+    projects: &[meta_core::config::ProjectInfo],
     repo_specs: &[meta_git_lib::worktree::RepoSpec],
     worktree_name: &str,
     branch_flag: Option<&str>,
     verbose: bool,
 ) -> Result<Vec<(String, std::path::PathBuf, String)>> {
     // Build dependency graph from projects
-    let project_deps: Vec<_> = projects.iter().map(|p| p.to_dependencies()).collect();
+    let project_deps: Vec<_> = projects.iter().map(|p| p.clone().into()).collect();
     let graph = DependencyGraph::build(project_deps)?;
 
     // Collect all repos to include (using HashSet for deduplication)

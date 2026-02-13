@@ -1,5 +1,5 @@
 use console::style;
-use meta_cli::config;
+use meta_core::config;
 use meta_plugin_protocol::{CommandResult, PlannedCommand, PluginRequestOptions};
 use std::process::Command;
 

@@ -53,11 +53,11 @@ struct RemoteMismatch {
 /// Check child repos for remote URL mismatches against .meta config,
 /// and offer to fix them.
 fn check_and_fix_remotes(cwd: &Path) {
-    let Some((config_path, _format)) = meta_cli::config::find_meta_config(cwd, None) else {
+    let Some((config_path, _format)) = meta_core::config::find_meta_config(cwd, None) else {
         return;
     };
 
-    let Ok((projects, _ignore)) = meta_cli::config::parse_meta_config(&config_path) else {
+    let Ok((projects, _ignore)) = meta_core::config::parse_meta_config(&config_path) else {
         return;
     };
 
@@ -174,7 +174,7 @@ fn check_and_fix_remotes(cwd: &Path) {
 ///   control_persist: 300  # 5 minutes
 /// ```
 fn load_ssh_config(cwd: &Path) -> Option<meta_git_lib::SshConfig> {
-    let (config_path, _format) = meta_cli::config::find_meta_config(cwd, None)?;
+    let (config_path, _format) = meta_core::config::find_meta_config(cwd, None)?;
 
     // Read the config file
     let content = std::fs::read_to_string(&config_path).ok()?;
@@ -190,11 +190,11 @@ fn load_ssh_config(cwd: &Path) -> Option<meta_git_lib::SshConfig> {
 /// Discover unique SSH hosts from the .meta config in the current directory.
 /// Falls back to ["github.com"] if no .meta config is found or no SSH URLs exist.
 pub fn discover_ssh_hosts(cwd: &Path) -> Vec<String> {
-    let Some((config_path, _format)) = meta_cli::config::find_meta_config(cwd, None) else {
+    let Some((config_path, _format)) = meta_core::config::find_meta_config(cwd, None) else {
         return vec!["github.com".to_string()];
     };
 
-    let Ok((projects, _ignore)) = meta_cli::config::parse_meta_config(&config_path) else {
+    let Ok((projects, _ignore)) = meta_core::config::parse_meta_config(&config_path) else {
         return vec!["github.com".to_string()];
     };
 

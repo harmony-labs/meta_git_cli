@@ -3,7 +3,7 @@
 //! Provides git operations optimized for meta repositories.
 
 mod clone;
-mod clone_queue;
+mod clone_worker;
 mod commit;
 mod git_env;
 mod helpers;
@@ -167,6 +167,7 @@ SPECIAL COMMANDS:
 
     Options:
       --recursive       Clone nested meta repositories recursively
+      --meta-depth N    Limit recursive meta-repo discovery to N levels deep
       --parallel N      Clone up to N repositories in parallel
       --depth N         Create a shallow clone with truncated history
 
@@ -258,7 +259,7 @@ mod tests {
             r#"{"projects": {"foo": "git@github.com:org/foo.git", "bar": "git@github.com:org/bar.git"}}"#,
         )
         .unwrap();
-        let (projects, _) = meta_cli::config::parse_meta_config(&meta_path).unwrap();
+        let (projects, _) = meta_core::config::parse_meta_config(&meta_path).unwrap();
         assert_eq!(projects.len(), 2);
         let names: std::collections::HashSet<_> =
             projects.iter().map(|p| p.name.as_str()).collect();

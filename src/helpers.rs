@@ -1,4 +1,4 @@
-use meta_cli::config;
+use meta_core::config;
 use std::path::Path;
 
 /// Get project directories - uses passed-in list if non-empty, otherwise reads local .meta
