@@ -26,11 +26,11 @@ jobs:
       - name: Clone dependencies
         shell: bash
         run: |
-          git clone --depth 1 https://github.com/harmony-labs/meta_plugin_protocol.git
-          git clone --depth 1 https://github.com/harmony-labs/meta_git_lib.git
-          git clone --depth 1 https://github.com/harmony-labs/meta_cli.git
-          git clone --depth 1 https://github.com/harmony-labs/meta_core.git
-          git clone --depth 1 https://github.com/harmony-labs/loop_lib.git
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          for repo in meta_plugin_protocol meta_git_lib meta_cli meta_core loop_lib; do
+            git clone --depth 1 -b "$BRANCH" "https://github.com/harmony-labs/${repo}.git" 2>/dev/null || \
+            git clone --depth 1 "https://github.com/harmony-labs/${repo}.git"
+          done
 
       - name: Create workspace root
         shell: bash
@@ -60,11 +60,11 @@ jobs:
 
       - name: Clone dependencies
         run: |
-          git clone --depth 1 https://github.com/harmony-labs/meta_plugin_protocol.git
-          git clone --depth 1 https://github.com/harmony-labs/meta_git_lib.git
-          git clone --depth 1 https://github.com/harmony-labs/meta_cli.git
-          git clone --depth 1 https://github.com/harmony-labs/meta_core.git
-          git clone --depth 1 https://github.com/harmony-labs/loop_lib.git
+          BRANCH="${{ github.head_ref || github.ref_name }}"
+          for repo in meta_plugin_protocol meta_git_lib meta_cli meta_core loop_lib; do
+            git clone --depth 1 -b "$BRANCH" "https://github.com/harmony-labs/${repo}.git" 2>/dev/null || \
+            git clone --depth 1 "https://github.com/harmony-labs/${repo}.git"
+          done
 
       - name: Create workspace root
         run: |
