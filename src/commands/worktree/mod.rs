@@ -3,11 +3,11 @@
 mod add;
 pub(crate) mod cli_types;
 mod create;
-mod destroy;
 mod diff;
 mod exec;
 mod list;
 mod prune;
+mod remove;
 mod status;
 
 use anyhow::Result;
@@ -93,8 +93,8 @@ fn handle_worktree_command(
     match command {
         WorktreeCommands::Create(args) => create::handle_create(args, verbose, json, global_strict),
         WorktreeCommands::Add(args) => add::handle_add(args, verbose, json, global_strict),
-        WorktreeCommands::Destroy(args) => {
-            destroy::handle_destroy(args, verbose, json, global_strict)
+        WorktreeCommands::Remove(args) | WorktreeCommands::Destroy(args) => {
+            remove::handle_remove(args, verbose, json, global_strict)
         }
         WorktreeCommands::List(args) => list::handle_list(args, verbose, json),
         WorktreeCommands::Status(args) => status::handle_status(args, verbose, json),
@@ -159,7 +159,7 @@ fn write_worktree_help(w: &mut dyn std::io::Write) {
     let _ = writeln!(w, "COMMANDS:");
     let _ = writeln!(w, "  create   Create a new worktree set");
     let _ = writeln!(w, "  add      Add a repo to an existing worktree set");
-    let _ = writeln!(w, "  destroy  Remove a worktree set");
+    let _ = writeln!(w, "  remove   Remove a worktree set");
     let _ = writeln!(w, "  list     List all worktree sets");
     let _ = writeln!(w, "  status   Show detailed status of a worktree set");
     let _ = writeln!(w, "  diff     Show cross-repo diff vs base branch");
@@ -188,7 +188,7 @@ fn write_worktree_help(w: &mut dyn std::io::Write) {
     );
     let _ = writeln!(w, "  --meta <KEY=VALUE>       Store custom metadata");
     let _ = writeln!(w);
-    let _ = writeln!(w, "DESTROY OPTIONS:");
+    let _ = writeln!(w, "REMOVE OPTIONS:");
     let _ = writeln!(
         w,
         "  --force                  Remove even with uncommitted changes"
@@ -198,7 +198,7 @@ fn write_worktree_help(w: &mut dyn std::io::Write) {
     let _ = writeln!(w, "  --include <REPOS>        Only run in specified repos");
     let _ = writeln!(w, "  --exclude <REPOS>        Skip specified repos");
     let _ = writeln!(w, "  --parallel               Run commands concurrently");
-    let _ = writeln!(w, "  --ephemeral              Atomic create+exec+destroy");
+    let _ = writeln!(w, "  --ephemeral              Atomic create+exec+remove");
     let _ = writeln!(w);
     let _ = writeln!(w, "DIFF OPTIONS:");
     let _ = writeln!(
