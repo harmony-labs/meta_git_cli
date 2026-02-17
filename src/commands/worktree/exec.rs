@@ -61,8 +61,7 @@ impl Drop for EphemeralGuard {
             force: true,
         };
         // Ephemeral cleanup uses strict=false to ensure best-effort cleanup
-        if let Err(e) = super::remove::handle_remove(destroy_args, self.verbose, self.json, false)
-        {
+        if let Err(e) = super::remove::handle_remove(destroy_args, self.verbose, self.json, false) {
             eprintln!(
                 "{} Failed to remove ephemeral worktree '{}': {e}",
                 "warning:".yellow().bold(),

@@ -3,11 +3,11 @@
 mod add;
 pub(crate) mod cli_types;
 mod create;
-mod remove;
 mod diff;
 mod exec;
 mod list;
 mod prune;
+mod remove;
 mod status;
 
 use anyhow::Result;
