@@ -13,6 +13,9 @@ pub enum WorktreeCommands {
     /// Add a repo to an existing worktree set
     Add(AddArgs),
     /// Remove a worktree set
+    Remove(DestroyArgs),
+    /// Remove a worktree set (alias for remove)
+    #[command(hide = true)]
     Destroy(DestroyArgs),
     /// List all worktree sets
     List(ListArgs),

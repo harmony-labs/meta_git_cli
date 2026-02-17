@@ -74,7 +74,7 @@ pub(crate) fn handle_create(
     let wt_dir = worktree_root.join(name);
     if wt_dir.exists() {
         anyhow::bail!(
-            "Worktree '{}' already exists at {}. Use 'meta worktree destroy {}' first.",
+            "Worktree '{}' already exists at {}. Use 'meta worktree remove {}' first.",
             name,
             wt_dir.display(),
             name

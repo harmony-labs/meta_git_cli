@@ -19,7 +19,7 @@ pub(crate) fn handle_add(args: AddArgs, verbose: bool, json: bool, strict: bool)
     if repo_specs.iter().any(|r| r.alias == ".") {
         anyhow::bail!(
             "Cannot add '.' to an existing worktree. The meta repo root can only be established at create time.\n\
-             Use 'meta worktree destroy {name}' then 'meta worktree create {name} --repo . ...' instead."
+             Use 'meta worktree remove {name}' then 'meta worktree create {name} --repo . ...' instead."
         );
     }
 

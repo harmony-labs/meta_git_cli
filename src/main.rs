@@ -74,6 +74,7 @@ fn main() {
                 "git worktree".to_string(),
                 "git worktree create".to_string(),
                 "git worktree add".to_string(),
+                "git worktree remove".to_string(),
                 "git worktree destroy".to_string(),
                 "git worktree list".to_string(),
                 "git worktree status".to_string(),
