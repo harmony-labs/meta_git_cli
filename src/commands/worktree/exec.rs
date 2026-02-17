@@ -43,7 +43,7 @@ fn build_loop_config(
     }
 }
 
-/// RAII guard that destroys an ephemeral worktree on drop.
+/// RAII guard that removes an ephemeral worktree on drop.
 /// Ensures cleanup even if the exec command panics.
 struct EphemeralGuard {
     name: String,
