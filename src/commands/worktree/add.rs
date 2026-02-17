@@ -44,9 +44,16 @@ pub(crate) fn handle_add(args: AddArgs, verbose: bool, json: bool, strict: bool)
         let (source, _project) = lookup_nested_project(&meta_dir, &spec.alias)?;
 
         let branch = resolve_branch(name, None, spec.branch.as_deref());
-        // Use the last component of the alias for the destination directory
-        let dest_name = spec.alias.rsplit('/').next().unwrap_or(&spec.alias);
-        let dest = wt_dir.join(dest_name);
+        // Preserve the full alias as the destination path so that relative
+        // references (e.g., Cargo.toml workspace members) remain valid.
+        let dest = wt_dir.join(&spec.alias);
+
+        // Ensure parent directories exist for nested paths (e.g., "vendor/")
+        if let Some(parent) = dest.parent() {
+            if parent != wt_dir {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
 
         if verbose {
             eprintln!(
