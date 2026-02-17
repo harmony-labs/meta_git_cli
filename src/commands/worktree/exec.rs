@@ -54,7 +54,7 @@ struct EphemeralGuard {
 impl Drop for EphemeralGuard {
     fn drop(&mut self) {
         if self.verbose {
-            eprintln!("Destroying ephemeral worktree '{}'...", self.name);
+            eprintln!("Removing ephemeral worktree '{}'...", self.name);
         }
         let destroy_args = DestroyArgs {
             name: self.name.clone(),

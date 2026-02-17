@@ -198,7 +198,7 @@ fn write_worktree_help(w: &mut dyn std::io::Write) {
     let _ = writeln!(w, "  --include <REPOS>        Only run in specified repos");
     let _ = writeln!(w, "  --exclude <REPOS>        Skip specified repos");
     let _ = writeln!(w, "  --parallel               Run commands concurrently");
-    let _ = writeln!(w, "  --ephemeral              Atomic create+exec+destroy");
+    let _ = writeln!(w, "  --ephemeral              Atomic create+exec+remove");
     let _ = writeln!(w);
     let _ = writeln!(w, "DIFF OPTIONS:");
     let _ = writeln!(
