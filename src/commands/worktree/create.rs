@@ -210,10 +210,18 @@ pub(crate) fn handle_create(
             continue;
         }
 
-        // Use the last component of the alias for the destination directory
-        // e.g., "vendor/nested-lib" -> "nested-lib"
-        let dest_name = alias.rsplit('/').next().unwrap_or(alias);
-        let dest = wt_dir.join(dest_name);
+        // Preserve the full alias as the destination path so that relative
+        // references (e.g., Cargo.toml workspace members) remain valid.
+        // "vendor/tree-sitter-markdown" -> "vendor/tree-sitter-markdown"
+        // Simple aliases are unchanged: "core" -> "core"
+        let dest = wt_dir.join(alias);
+
+        // Ensure parent directories exist for nested paths (e.g., "vendor/")
+        if let Some(parent) = dest.parent() {
+            if parent != wt_dir {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
 
         if verbose {
             eprintln!(
