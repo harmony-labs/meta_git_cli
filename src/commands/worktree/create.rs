@@ -488,15 +488,23 @@ fn build_nested_dep_graph(meta_dir: &std::path::Path) -> Result<DependencyGraph>
             .filter(|prefix| prefix.is_empty() || prefix.ends_with('/'))
             .unwrap_or("");
 
+        let qualify = |name: &str| {
+            if project_map.contains_key(name) || name == "." {
+                name.to_string()
+            } else {
+                format!("{}{}", parent_prefix, name)
+            }
+        };
+
         let prefixed_deps: Vec<String> = info
             .depends_on
             .iter()
-            .map(|dep| format!("{}{}", parent_prefix, dep))
+            .map(|dep| qualify(dep))
             .collect();
         let prefixed_provides: Vec<String> = info
             .provides
             .iter()
-            .map(|p| format!("{}{}", parent_prefix, p))
+            .map(|p| qualify(p))
             .collect();
 
         project_deps.push(ProjectDependencies {
