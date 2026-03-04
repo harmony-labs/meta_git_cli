@@ -365,28 +365,28 @@ fn resolve_repos_with_dependencies(
             continue;
         }
 
-        // In recursive mode, aliases must be canonicalized to full paths
-        // (e.g., "core" → "open-source/gitkb/core") to match graph keys.
-        let alias = if recursive {
-            canonicalize_alias(&spec.alias, &graph)?
+        // When recursive, graph keys are full paths (e.g., "open-source/gitkb/core").
+        // Resolve spec.alias against the graph to handle both full-path and short aliases.
+        let resolved_alias = if recursive {
+            resolve_alias_in_graph(&graph, &spec.alias)?
         } else {
             spec.alias.clone()
         };
 
         // Add the explicitly requested repo
-        repos_to_include.insert(alias.clone());
+        repos_to_include.insert(resolved_alias.clone());
 
         // Get transitive dependencies
-        let deps = graph.get_all_dependencies(&alias);
+        let deps = graph.get_all_dependencies(&resolved_alias);
         log::debug!(
             "Resolved transitive dependencies for '{}': {:?}",
-            alias,
+            resolved_alias,
             deps
         );
         for dep in deps {
             repos_to_include.insert(dep.to_string());
             if verbose {
-                eprintln!("  Including '{}' (dependency of '{}')", dep, alias);
+                eprintln!("  Including '{}' (dependency of '{}')", dep, resolved_alias);
             }
         }
     }
@@ -414,8 +414,6 @@ fn resolve_repos_with_dependencies(
         }
 
         let (source, _project) = lookup_nested_project(meta_dir, alias)?;
-        // Match by exact alias or by suffix (handles canonicalized paths:
-        // user passes "core", repos_to_include has "open-source/gitkb/core")
         let per_branch = repo_specs
             .iter()
             .find(|r| r.alias == *alias || alias.ends_with(&format!("/{}", r.alias)))
@@ -430,40 +428,39 @@ fn resolve_repos_with_dependencies(
     Ok(list)
 }
 
-/// Resolve a user-supplied alias to its canonical full path in the graph.
+/// Resolve a short alias (e.g., "core") to its full graph key (e.g., "open-source/gitkb/core").
 ///
-/// Tries an exact match first. If not found, searches for a unique project
-/// whose full path ends with `/<alias>`. Errors on ambiguous matches.
-fn canonicalize_alias(alias: &str, graph: &DependencyGraph) -> Result<String> {
-    // Exact match — alias is already a full path
+/// If the alias directly matches a graph key, returns it as-is.
+/// Otherwise, looks for a unique graph key that ends with "/<alias>".
+/// Errors if no match or multiple matches are found.
+fn resolve_alias_in_graph(graph: &DependencyGraph, alias: &str) -> Result<String> {
+    // Direct match — already a full path
     if graph.get_project(alias).is_some() {
         return Ok(alias.to_string());
     }
 
-    // Suffix match: find projects whose name ends with /alias
-    let suffix = format!("/{alias}");
-    let matches: Vec<_> = graph
+    // Try suffix match: find graph keys ending with "/<alias>"
+    let suffix = format!("/{}", alias);
+    let matches: Vec<&str> = graph
         .all_projects()
-        .into_iter()
-        .filter(|p| p.name.ends_with(&suffix))
+        .iter()
+        .filter(|p| p.name.ends_with(&suffix) || p.name == alias)
+        .map(|p| p.name.as_str())
         .collect();
 
     match matches.len() {
-        1 => Ok(matches[0].name.clone()),
+        1 => Ok(matches[0].to_string()),
         0 => anyhow::bail!(
-            "No project matching '{}' found in recursive dependency graph. \
-             Use the full path from root (e.g., 'open-source/gitkb/{}')",
-            alias,
-            alias,
+            "Repo '{}' not found in the recursive project graph. \
+             With --recursive, use the full path from root (e.g., 'open-source/gitkb/core').",
+            alias
         ),
-        _ => {
-            let names: Vec<_> = matches.iter().map(|p| p.name.as_str()).collect();
-            anyhow::bail!(
-                "Ambiguous alias '{}' matches multiple projects: {}. Use the full path.",
-                alias,
-                names.join(", ")
-            )
-        }
+        _ => anyhow::bail!(
+            "Repo alias '{}' is ambiguous — matches: {}. \
+             Use the full path to disambiguate.",
+            alias,
+            matches.join(", ")
+        ),
     }
 }
 
@@ -486,8 +483,6 @@ fn build_nested_dep_graph(meta_dir: &std::path::Path) -> Result<DependencyGraph>
         // Compute the parent prefix: strip the local path from the full path.
         // e.g., full_path="open-source/gitkb/core", info.path="core"
         //        → parent_prefix="open-source/gitkb/"
-        // Use strip_suffix with boundary check to avoid partial path matches
-        // (e.g., "services/foobar" should NOT match suffix "bar").
         let parent_prefix = full_path
             .strip_suffix(info.path.as_str())
             .filter(|prefix| prefix.is_empty() || prefix.ends_with('/'))
