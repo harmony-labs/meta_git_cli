@@ -3,7 +3,7 @@ use chrono::Utc;
 use colored::*;
 use std::collections::{HashMap, HashSet};
 
-use meta_cli::dependency_graph::DependencyGraph;
+use meta_cli::dependency_graph::{DependencyGraph, ProjectDependencies};
 use meta_git_lib::worktree::git_ops::*;
 use meta_git_lib::worktree::helpers::*;
 use meta_git_lib::worktree::hooks::fire_post_create;
@@ -62,12 +62,18 @@ pub(crate) fn handle_create(
     let from_pr_info = from_pr_spec.map(resolve_from_pr).transpose()?;
 
     let no_deps = args.no_deps;
+    let recursive = args.recursive;
 
     if repo_specs.is_empty() && !use_all {
         anyhow::bail!("Specify repos with --repo <alias> or use --all");
     }
 
-    let meta_dir = require_meta_dir()?;
+    let nearest_meta_dir = require_meta_dir()?;
+    let meta_dir = if recursive {
+        meta_core::config::find_root_meta_dir(&nearest_meta_dir)
+    } else {
+        nearest_meta_dir
+    };
     let worktree_root = resolve_worktree_root(Some(&meta_dir))?;
 
     // Check if worktree already exists
@@ -130,6 +136,7 @@ pub(crate) fn handle_create(
             name,
             branch_flag,
             verbose,
+            recursive,
         )?
     };
 
@@ -321,6 +328,10 @@ pub(crate) fn handle_create(
 /// When --repo is specified without --no-deps:
 /// 1. Always includes root repo "." (contains workspace Cargo.toml)
 /// 2. Resolves transitive dependencies via provides/depends_on from .meta.yaml
+///
+/// When `recursive` is true, walks the full nested meta tree from `meta_dir`
+/// (which should already be the root), building a dependency graph where all
+/// project names and deps use full paths (e.g., "open-source/gitkb/core").
 fn resolve_repos_with_dependencies(
     meta_dir: &std::path::Path,
     projects: &[meta_core::config::ProjectInfo],
@@ -328,10 +339,15 @@ fn resolve_repos_with_dependencies(
     worktree_name: &str,
     branch_flag: Option<&str>,
     verbose: bool,
+    recursive: bool,
 ) -> Result<Vec<(String, std::path::PathBuf, String)>> {
-    // Build dependency graph from projects
-    let project_deps: Vec<_> = projects.iter().map(|p| p.clone().into()).collect();
-    let graph = DependencyGraph::build(project_deps)?;
+    // Build dependency graph — either flat (current level) or nested (full tree)
+    let graph = if recursive {
+        build_nested_dep_graph(meta_dir)?
+    } else {
+        let project_deps: Vec<_> = projects.iter().map(|p| p.clone().into()).collect();
+        DependencyGraph::build(project_deps)?
+    };
 
     // Collect all repos to include (using HashSet for deduplication)
     let mut repos_to_include: HashSet<String> = HashSet::new();
@@ -402,4 +418,55 @@ fn resolve_repos_with_dependencies(
     }
 
     Ok(list)
+}
+
+/// Build a dependency graph from the full nested meta tree.
+///
+/// Walks `meta_dir`'s meta tree recursively, builds a project map with
+/// fully-qualified paths (e.g., "open-source/gitkb/core"), then prefixes
+/// each project's `depends_on` and `provides` with its parent path so
+/// cross-workspace dependencies resolve correctly.
+///
+/// Example: project "core" at path "open-source/gitkb/core" with
+/// `depends_on: ["vendor/tree-sitter-markdown"]` becomes
+/// `depends_on: ["open-source/gitkb/vendor/tree-sitter-markdown"]`.
+fn build_nested_dep_graph(meta_dir: &std::path::Path) -> Result<DependencyGraph> {
+    let tree = meta_core::config::walk_meta_tree(meta_dir, None)?;
+    let project_map = meta_core::config::build_project_map(&tree, meta_dir, "");
+
+    let mut project_deps = Vec::new();
+    for (full_path, (_fs_path, info)) in &project_map {
+        // Compute the parent prefix: strip the local path from the full path.
+        // e.g., full_path="open-source/gitkb/core", info.path="core"
+        //        → parent_prefix="open-source/gitkb/"
+        let parent_prefix = if full_path.len() > info.path.len()
+            && full_path.ends_with(&info.path)
+        {
+            &full_path[..full_path.len() - info.path.len()]
+        } else {
+            ""
+        };
+
+        let prefixed_deps: Vec<String> = info
+            .depends_on
+            .iter()
+            .map(|dep| format!("{}{}", parent_prefix, dep))
+            .collect();
+        let prefixed_provides: Vec<String> = info
+            .provides
+            .iter()
+            .map(|p| format!("{}{}", parent_prefix, p))
+            .collect();
+
+        project_deps.push(ProjectDependencies {
+            name: full_path.clone(),
+            path: full_path.clone(),
+            repo: info.repo.clone(),
+            tags: info.tags.clone(),
+            provides: prefixed_provides,
+            depends_on: prefixed_deps,
+        });
+    }
+
+    DependencyGraph::build(project_deps)
 }
