@@ -365,20 +365,28 @@ fn resolve_repos_with_dependencies(
             continue;
         }
 
+        // In recursive mode, aliases must be canonicalized to full paths
+        // (e.g., "core" → "open-source/gitkb/core") to match graph keys.
+        let alias = if recursive {
+            canonicalize_alias(&spec.alias, &graph)?
+        } else {
+            spec.alias.clone()
+        };
+
         // Add the explicitly requested repo
-        repos_to_include.insert(spec.alias.clone());
+        repos_to_include.insert(alias.clone());
 
         // Get transitive dependencies
-        let deps = graph.get_all_dependencies(&spec.alias);
+        let deps = graph.get_all_dependencies(&alias);
         log::debug!(
             "Resolved transitive dependencies for '{}': {:?}",
-            spec.alias,
+            alias,
             deps
         );
         for dep in deps {
             repos_to_include.insert(dep.to_string());
             if verbose {
-                eprintln!("  Including '{}' (dependency of '{}')", dep, spec.alias);
+                eprintln!("  Including '{}' (dependency of '{}')", dep, alias);
             }
         }
     }
@@ -420,6 +428,43 @@ fn resolve_repos_with_dependencies(
     Ok(list)
 }
 
+/// Resolve a user-supplied alias to its canonical full path in the graph.
+///
+/// Tries an exact match first. If not found, searches for a unique project
+/// whose full path ends with `/<alias>`. Errors on ambiguous matches.
+fn canonicalize_alias(alias: &str, graph: &DependencyGraph) -> Result<String> {
+    // Exact match — alias is already a full path
+    if graph.get_project(alias).is_some() {
+        return Ok(alias.to_string());
+    }
+
+    // Suffix match: find projects whose name ends with /alias
+    let suffix = format!("/{alias}");
+    let matches: Vec<_> = graph
+        .all_projects()
+        .into_iter()
+        .filter(|p| p.name.ends_with(&suffix))
+        .collect();
+
+    match matches.len() {
+        1 => Ok(matches[0].name.clone()),
+        0 => anyhow::bail!(
+            "No project matching '{}' found in recursive dependency graph. \
+             Use the full path from root (e.g., 'open-source/gitkb/{}')",
+            alias,
+            alias,
+        ),
+        _ => {
+            let names: Vec<_> = matches.iter().map(|p| p.name.as_str()).collect();
+            anyhow::bail!(
+                "Ambiguous alias '{}' matches multiple projects: {}. Use the full path.",
+                alias,
+                names.join(", ")
+            )
+        }
+    }
+}
+
 /// Build a dependency graph from the full nested meta tree.
 ///
 /// Walks `meta_dir`'s meta tree recursively, builds a project map with
@@ -439,12 +484,12 @@ fn build_nested_dep_graph(meta_dir: &std::path::Path) -> Result<DependencyGraph>
         // Compute the parent prefix: strip the local path from the full path.
         // e.g., full_path="open-source/gitkb/core", info.path="core"
         //        → parent_prefix="open-source/gitkb/"
-        let parent_prefix = if full_path.len() > info.path.len() && full_path.ends_with(&info.path)
-        {
-            &full_path[..full_path.len() - info.path.len()]
-        } else {
-            ""
-        };
+        // Use strip_suffix with boundary check to avoid partial path matches
+        // (e.g., "services/foobar" should NOT match suffix "bar").
+        let parent_prefix = full_path
+            .strip_suffix(info.path.as_str())
+            .filter(|prefix| prefix.is_empty() || prefix.ends_with('/'))
+            .unwrap_or("");
 
         let prefixed_deps: Vec<String> = info
             .depends_on
