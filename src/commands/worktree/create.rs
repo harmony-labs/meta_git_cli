@@ -414,9 +414,13 @@ fn resolve_repos_with_dependencies(
         }
 
         let (source, _project) = lookup_nested_project(meta_dir, alias)?;
+        // Match by exact alias or by suffix (handles canonicalized paths:
+        // user passes "core", repos_to_include has "open-source/gitkb/core")
         let per_branch = repo_specs
             .iter()
-            .find(|r| r.alias == *alias)
+            .find(|r| {
+                r.alias == *alias || alias.ends_with(&format!("/{}", r.alias))
+            })
             .and_then(|r| r.branch.as_deref());
         list.push((
             alias.clone(),
