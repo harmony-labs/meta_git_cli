@@ -439,8 +439,7 @@ fn build_nested_dep_graph(meta_dir: &std::path::Path) -> Result<DependencyGraph>
         // Compute the parent prefix: strip the local path from the full path.
         // e.g., full_path="open-source/gitkb/core", info.path="core"
         //        → parent_prefix="open-source/gitkb/"
-        let parent_prefix = if full_path.len() > info.path.len()
-            && full_path.ends_with(&info.path)
+        let parent_prefix = if full_path.len() > info.path.len() && full_path.ends_with(&info.path)
         {
             &full_path[..full_path.len() - info.path.len()]
         } else {
