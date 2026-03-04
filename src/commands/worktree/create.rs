@@ -496,16 +496,8 @@ fn build_nested_dep_graph(meta_dir: &std::path::Path) -> Result<DependencyGraph>
             }
         };
 
-        let prefixed_deps: Vec<String> = info
-            .depends_on
-            .iter()
-            .map(|dep| qualify(dep))
-            .collect();
-        let prefixed_provides: Vec<String> = info
-            .provides
-            .iter()
-            .map(|p| qualify(p))
-            .collect();
+        let prefixed_deps: Vec<String> = info.depends_on.iter().map(|dep| qualify(dep)).collect();
+        let prefixed_provides: Vec<String> = info.provides.iter().map(|p| qualify(p)).collect();
 
         project_deps.push(ProjectDependencies {
             name: full_path.clone(),
