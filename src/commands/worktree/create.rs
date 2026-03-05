@@ -416,7 +416,12 @@ fn resolve_repos_with_dependencies(
         let (source, _project) = lookup_nested_project(meta_dir, alias)?;
         let per_branch = repo_specs
             .iter()
-            .find(|r| r.alias == *alias || alias.ends_with(&format!("/{}", r.alias)))
+            .find(|r| {
+                r.alias == *alias
+                    || resolve_alias_in_graph(&graph, &r.alias)
+                        .map(|resolved| resolved == *alias)
+                        .unwrap_or(false)
+            })
             .and_then(|r| r.branch.as_deref());
         list.push((
             alias.clone(),
