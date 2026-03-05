@@ -88,6 +88,15 @@ pub struct CreateArgs {
     /// Use --no-deps to include only explicitly specified repos.
     #[arg(long)]
     pub no_deps: bool,
+
+    /// Resolve dependencies across the full nested meta tree
+    ///
+    /// By default, dependencies are resolved from the current .meta level.
+    /// With --recursive, walks up to the root meta directory and resolves
+    /// dependencies across all nested .meta workspaces. Repo aliases
+    /// use full paths from root (e.g., open-source/gitkb/core).
+    #[arg(long, short = 'r')]
+    pub recursive: bool,
 }
 
 #[derive(Args)]
