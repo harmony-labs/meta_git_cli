@@ -407,6 +407,16 @@ fn resolve_repos_with_dependencies(
         ));
     }
 
+    // Precompute a mapping from resolved alias to per-repo branch so we avoid
+    // repeated graph scans inside the per-repo loop below.
+    let resolved_branch_map: HashMap<String, Option<&str>> = repo_specs
+        .iter()
+        .filter_map(|r| {
+            let resolved = resolve_alias_in_graph(&graph, &r.alias).ok()?;
+            Some((resolved, r.branch.as_deref()))
+        })
+        .collect();
+
     // Add other repos
     for alias in &repos_to_include {
         if alias == "." {
@@ -414,15 +424,10 @@ fn resolve_repos_with_dependencies(
         }
 
         let (source, _project) = lookup_nested_project(meta_dir, alias)?;
-        let per_branch = repo_specs
-            .iter()
-            .find(|r| {
-                r.alias == *alias
-                    || resolve_alias_in_graph(&graph, &r.alias)
-                        .map(|resolved| resolved == *alias)
-                        .unwrap_or(false)
-            })
-            .and_then(|r| r.branch.as_deref());
+        let per_branch = resolved_branch_map
+            .get(alias.as_str())
+            .copied()
+            .flatten();
         list.push((
             alias.clone(),
             source,
