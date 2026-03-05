@@ -424,10 +424,7 @@ fn resolve_repos_with_dependencies(
         }
 
         let (source, _project) = lookup_nested_project(meta_dir, alias)?;
-        let per_branch = resolved_branch_map
-            .get(alias.as_str())
-            .copied()
-            .flatten();
+        let per_branch = resolved_branch_map.get(alias.as_str()).copied().flatten();
         list.push((
             alias.clone(),
             source,
