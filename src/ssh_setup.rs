@@ -145,10 +145,7 @@ pub fn establish_ssh_masters(urls: &[&str]) -> SshMasters {
             let socket_path =
                 sockets_dir.join(format!("{}@{}-{}", target.user, target.host, target.port));
             let _ = std::fs::remove_file(&socket_path);
-            debug!(
-                "Removed stale socket for {}@{}",
-                target.user, target.host
-            );
+            debug!("Removed stale socket for {}@{}", target.user, target.host);
         }
 
         any_needed_our_master = true;
