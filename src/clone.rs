@@ -1,4 +1,5 @@
 use crate::clone_worker::clone_with_queue;
+use crate::ssh_setup;
 use console::style;
 use indicatif::MultiProgress;
 use meta_core::config;
@@ -117,11 +118,20 @@ pub(crate) fn execute_git_clone(
         return Ok(CommandResult::Message(String::new()));
     }
 
+    // Set up SSH ControlMaster for the meta repo's host before cloning
+    let mut ssh_cmd = match ssh_setup::establish_ssh_masters(&[url.as_str()]) {
+        ssh_setup::SshMasters::OurSockets(dir) => Some(ssh_setup::git_ssh_command(&dir)),
+        ssh_setup::SshMasters::UserManaged | ssh_setup::SshMasters::Failed => None,
+    };
+
     println!("Cloning meta repository: {url}");
     let mut clone_cmd = Command::new("git");
     clone_cmd.arg("clone").args(&git_clone_args).arg(&url);
     if let Some(ref dir) = dir_arg {
         clone_cmd.arg(dir);
+    }
+    if let Some(ref ssh) = ssh_cmd {
+        clone_cmd.env("GIT_SSH_COMMAND", ssh);
     }
     clone_cmd.current_dir(cwd);
     let status = clone_cmd.status()?;
@@ -153,6 +163,23 @@ pub(crate) fn execute_git_clone(
         ));
     }
 
+    // Establish SSH masters for any additional hosts in the queue
+    let queue_urls = queue.peek_urls();
+    if !queue_urls.is_empty() {
+        let url_refs: Vec<&str> = queue_urls.iter().map(|s| s.as_str()).collect();
+        match ssh_setup::establish_ssh_masters(&url_refs) {
+            ssh_setup::SshMasters::OurSockets(sockets_dir) => {
+                ssh_cmd = Some(ssh_setup::git_ssh_command(&sockets_dir));
+            }
+            ssh_setup::SshMasters::UserManaged => {} // parallel OK, no override needed
+            ssh_setup::SshMasters::Failed if ssh_cmd.is_none() => {
+                log::warn!("SSH multiplexing setup failed, falling back to serial cloning");
+                parallel = 1;
+            }
+            ssh_setup::SshMasters::Failed => {} // initial host works
+        }
+    }
+
     println!(
         "Cloning {} child repositories{}",
         initial_count,
@@ -162,7 +189,7 @@ pub(crate) fn execute_git_clone(
     let mp = MultiProgress::new();
 
     // Use the queue-based cloning system
-    clone_with_queue(Arc::clone(&queue), parallel, &mp)?;
+    clone_with_queue(Arc::clone(&queue), parallel, &mp, ssh_cmd.as_deref())?;
 
     let (completed, total) = queue.get_counts();
     if total > initial_count {

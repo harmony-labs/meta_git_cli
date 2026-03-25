@@ -7,11 +7,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-/// Clone repositories using a worker pool where each worker continuously pulls from the queue
+/// Clone repositories using a worker pool where each worker continuously pulls from the queue.
+///
+/// If `ssh_cmd` is provided, it's set as `GIT_SSH_COMMAND` on all spawned git subprocesses
+/// to enable SSH multiplexing without requiring `~/.ssh/config` setup.
 pub(crate) fn clone_with_queue(
     queue: Arc<CloneQueue>,
     parallelism: usize,
     mp: &MultiProgress,
+    ssh_cmd: Option<&str>,
 ) -> anyhow::Result<()> {
     use std::sync::Condvar;
 
@@ -24,6 +28,8 @@ pub(crate) fn clone_with_queue(
     // Condition variable to signal when work might be available or workers finish
     let work_signal = Arc::new((Mutex::new(false), Condvar::new()));
 
+    let ssh_cmd = Arc::new(ssh_cmd.map(|s| s.to_string()));
+
     // Spawn worker threads
     let handles: Vec<_> = (0..parallelism)
         .map(|_worker_id| {
@@ -32,6 +38,7 @@ pub(crate) fn clone_with_queue(
             let signal = Arc::clone(&work_signal);
             let mp = mp.clone();
             let style = spinner_style.clone();
+            let ssh_cmd = Arc::clone(&ssh_cmd);
 
             std::thread::spawn(move || {
                 loop {
@@ -54,7 +61,7 @@ pub(crate) fn clone_with_queue(
                             pb.enable_steady_tick(Duration::from_millis(100));
 
                             // Clone the repo (this may add new tasks to queue)
-                            clone_single_repo(&task, &queue, &pb);
+                            clone_single_repo(&task, &queue, &pb, ssh_cmd.as_deref());
 
                             // Mark worker as inactive
                             active.fetch_sub(1, Ordering::SeqCst);
@@ -95,7 +102,12 @@ pub(crate) fn clone_with_queue(
 }
 
 /// Clone a single repository and handle .meta discovery
-fn clone_single_repo(task: &CloneTask, queue: &Arc<CloneQueue>, pb: &ProgressBar) {
+fn clone_single_repo(
+    task: &CloneTask,
+    queue: &Arc<CloneQueue>,
+    pb: &ProgressBar,
+    ssh_cmd: Option<&str>,
+) {
     // Skip if target exists
     if task.target_path.exists()
         && task
@@ -120,6 +132,9 @@ fn clone_single_repo(task: &CloneTask, queue: &Arc<CloneQueue>, pb: &ProgressBar
     cmd.arg("clone").arg(&task.url).arg(&task.target_path);
     if let Some(d) = queue.git_depth() {
         cmd.arg("--depth").arg(d);
+    }
+    if let Some(ssh) = ssh_cmd {
+        cmd.env("GIT_SSH_COMMAND", ssh);
     }
 
     // Run clone

@@ -63,7 +63,6 @@ pub fn execute_command(
         "git status" => status::execute_git_status(projects, options, cwd),
         "git clone" => clone::execute_git_clone(args, options, cwd),
         "git update" => update::execute_git_update(projects, options.dry_run, cwd),
-        "git setup-ssh" => ssh::execute_git_setup_ssh(cwd),
         "git commit" => commit::execute_git_commit(args, projects, options, cwd),
         "git snapshot" => snapshot::execute_snapshot_help(),
         "git snapshot create" => snapshot::execute_snapshot_create(args, projects, cwd),
@@ -126,30 +125,57 @@ fn execute_raw_git_command(
         })
         .collect();
 
-    // For remote commands running in parallel, add SSH pre-commands to establish
-    // ControlMaster connections before the parallel execution starts.
-    // Also limit parallelism to 10 (SSH ControlMaster default MaxSessions limit).
+    // For remote commands running in parallel, establish SSH ControlMaster
+    // connections and inject GIT_SSH_COMMAND into each planned command.
     if options.parallel && is_remote_command(command) {
-        let hosts = ssh::discover_ssh_hosts(cwd);
-        let host_refs: Vec<&str> = hosts.iter().map(|s| s.as_str()).collect();
-        let pre_commands = ssh_setup::ssh_pre_commands(&host_refs);
+        let urls = ssh::discover_ssh_urls(cwd);
+
+        // HTTPS-only workspaces don't need SSH multiplexing
+        if urls.is_empty() {
+            return CommandResult::Plan(commands, Some(true));
+        }
+
+        let url_refs: Vec<&str> = urls.iter().map(|s| s.as_str()).collect();
+
+        let (ssh_env, parallel_ok) = match ssh_setup::establish_ssh_masters(&url_refs) {
+            ssh_setup::SshMasters::OurSockets(dir) => {
+                (Some(ssh_setup::git_ssh_command(&dir)), true)
+            }
+            ssh_setup::SshMasters::UserManaged => (None, true),
+            ssh_setup::SshMasters::Failed => (None, false),
+        };
+
+        // Inject GIT_SSH_COMMAND into every planned command's env
+        let commands: Vec<PlannedCommand> = commands
+            .into_iter()
+            .map(|mut cmd| {
+                if let Some(ref ssh) = ssh_env {
+                    let env = cmd.env.get_or_insert_with(Default::default);
+                    env.insert("GIT_SSH_COMMAND".to_string(), ssh.clone());
+                }
+                cmd
+            })
+            .collect();
 
         // SSH ControlMaster has a default MaxSessions limit of 10 (server-side).
-        // Limit parallelism to avoid exceeding this and triggering mux warnings.
         const SSH_MAX_SESSIONS: usize = 10;
 
         // Stagger spawns by 25ms to prevent SSH socket saturation.
-        // With 13 repos, this spreads connection attempts over ~325ms.
         const SSH_SPAWN_STAGGER_MS: u64 = 25;
 
-        CommandResult::FullPlan(ExecutionPlan {
-            pre_commands,
-            commands,
-            post_commands: vec![],
-            parallel: Some(true),
-            max_parallel: Some(SSH_MAX_SESSIONS),
-            spawn_stagger_ms: Some(SSH_SPAWN_STAGGER_MS),
-        })
+        if parallel_ok {
+            CommandResult::FullPlan(ExecutionPlan {
+                pre_commands: vec![],
+                commands,
+                post_commands: vec![],
+                parallel: Some(true),
+                max_parallel: Some(SSH_MAX_SESSIONS),
+                spawn_stagger_ms: Some(SSH_SPAWN_STAGGER_MS),
+            })
+        } else {
+            // SSH setup failed — fall back to sequential
+            CommandResult::Plan(commands, Some(false))
+        }
     } else {
         CommandResult::Plan(commands, Some(options.parallel))
     }
@@ -174,9 +200,6 @@ SPECIAL COMMANDS:
   meta git update
     Updates all repositories by cloning any missing repos and pulling the latest
     changes. Runs in parallel for efficiency.
-
-  meta git setup-ssh
-    Configures SSH multiplexing for faster parallel git operations.
 
   meta git commit --edit
     Opens an editor to create different commit messages for each repo.
@@ -281,7 +304,7 @@ mod tests {
         let help = get_help_text();
         assert!(help.contains("meta git clone"));
         assert!(help.contains("meta git update"));
-        assert!(help.contains("meta git setup-ssh"));
+        assert!(!help.contains("meta git setup-ssh"));
     }
 
     #[test]
