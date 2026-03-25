@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 /// Discover unique SSH hosts from the .meta config in the current directory.
-/// Falls back to ["github.com"] if no .meta config is found or no SSH URLs exist.
+/// Returns an empty list if no .meta config is found or no SSH URLs exist.
 pub fn discover_ssh_hosts(cwd: &Path) -> Vec<String> {
     let Some((config_path, _format)) = meta_core::config::find_meta_config(cwd, None) else {
         return vec![];

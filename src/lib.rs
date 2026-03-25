@@ -129,6 +129,12 @@ fn execute_raw_git_command(
     // connections and inject GIT_SSH_COMMAND into each planned command.
     if options.parallel && is_remote_command(command) {
         let hosts = ssh::discover_ssh_hosts(cwd);
+
+        // HTTPS-only workspaces don't need SSH multiplexing
+        if hosts.is_empty() {
+            return CommandResult::Plan(commands, Some(true));
+        }
+
         // Convert hostnames to SCP-style URLs for establish_ssh_masters
         let urls: Vec<String> = hosts.iter().map(|h| format!("git@{h}:")).collect();
         let url_refs: Vec<&str> = urls.iter().map(|s| s.as_str()).collect();

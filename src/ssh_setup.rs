@@ -96,18 +96,6 @@ fn socket_exists_in(sockets_dir: &Path, target: &SshTarget) -> bool {
 /// - `SshMasters::UserManaged` if all hosts already have active masters
 /// - `SshMasters::Failed` if sockets dir couldn't be created or all connections failed
 pub fn establish_ssh_masters(urls: &[&str]) -> SshMasters {
-    let sockets_dir = match meta_git_lib::ensure_ssh_sockets_dir() {
-        Ok(Some(dir)) => dir,
-        Ok(None) => {
-            warn!("Could not determine HOME directory for SSH sockets");
-            return SshMasters::Failed;
-        }
-        Err(e) => {
-            warn!("Failed to create SSH sockets directory: {e}");
-            return SshMasters::Failed;
-        }
-    };
-
     // Parse and deduplicate targets
     let mut targets: Vec<SshTarget> = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -120,9 +108,22 @@ pub fn establish_ssh_masters(urls: &[&str]) -> SshMasters {
         }
     }
 
+    // No SSH remotes — nothing to do, parallel execution is safe
     if targets.is_empty() {
-        return SshMasters::Failed;
+        return SshMasters::UserManaged;
     }
+
+    let sockets_dir = match meta_git_lib::ensure_ssh_sockets_dir() {
+        Ok(Some(dir)) => dir,
+        Ok(None) => {
+            warn!("Could not determine HOME directory for SSH sockets");
+            return SshMasters::Failed;
+        }
+        Err(e) => {
+            warn!("Failed to create SSH sockets directory: {e}");
+            return SshMasters::Failed;
+        }
+    };
 
     let mut any_needed_our_master = false;
     let mut any_succeeded = false;
@@ -139,10 +140,15 @@ pub fn establish_ssh_masters(urls: &[&str]) -> SshMasters {
 
         // Check if we already have a socket from a previous run
         if socket_exists_in(&sockets_dir, target) {
-            debug!("Socket already exists for {}@{}", target.user, target.host);
-            any_needed_our_master = true;
-            any_succeeded = true;
-            continue;
+            // Socket exists but master isn't active — may be stale.
+            // Remove it and create a fresh master below.
+            let socket_path =
+                sockets_dir.join(format!("{}@{}-{}", target.user, target.host, target.port));
+            let _ = std::fs::remove_file(&socket_path);
+            debug!(
+                "Removed stale socket for {}@{}",
+                target.user, target.host
+            );
         }
 
         any_needed_our_master = true;
