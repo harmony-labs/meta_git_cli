@@ -21,9 +21,33 @@ pub enum SshMasters {
 
 /// Parsed SSH target from a remote URL.
 struct SshTarget {
-    user: String,
+    /// `None` when the URL omits a user — SSH resolves from config or current OS user.
+    user: Option<String>,
     host: String,
     port: u16,
+}
+
+impl SshTarget {
+    /// SSH destination string: `user@host` when user is explicit, otherwise just `host`.
+    fn destination(&self) -> String {
+        match &self.user {
+            Some(u) => format!("{u}@{}", self.host),
+            None => self.host.clone(),
+        }
+    }
+
+    /// Key for deduplication and socket naming. Uses `_` for absent user so
+    /// sockets from different resolution contexts don't collide.
+    fn socket_name(&self) -> String {
+        let user_part = self.user.as_deref().unwrap_or("_");
+        format!("{user_part}@{}-{}", self.host, self.port)
+    }
+
+    /// Key for deduplication.
+    fn dedup_key(&self) -> String {
+        let user_part = self.user.as_deref().unwrap_or("_");
+        format!("{user_part}@{}:{}", self.host, self.port)
+    }
 }
 
 /// Parse an SSH remote URL into user, host, port components.
@@ -35,9 +59,9 @@ fn parse_ssh_target(url: &str) -> Option<SshTarget> {
         // ssh://user@host:port/path or ssh://user@host/path
         let (user_host, _path) = rest.split_once('/').unwrap_or((rest, ""));
         let (user, host_port) = if let Some((u, hp)) = user_host.split_once('@') {
-            (u.to_string(), hp)
+            (Some(u.to_string()), hp)
         } else {
-            ("git".to_string(), user_host)
+            (None, user_host)
         };
         let (host, port) = if let Some((h, p)) = host_port.split_once(':') {
             let port = p.parse::<u16>().unwrap_or_else(|_| {
@@ -54,9 +78,9 @@ fn parse_ssh_target(url: &str) -> Option<SshTarget> {
     } else if let Some((user_host, _path)) = url.split_once(':') {
         // git@github.com:org/repo.git (SCP-style)
         let (user, host) = if let Some((u, h)) = user_host.split_once('@') {
-            (u.to_string(), h.to_string())
+            (Some(u.to_string()), h.to_string())
         } else {
-            ("git".to_string(), user_host.to_string())
+            (None, user_host.to_string())
         };
         Some(SshTarget {
             user,
@@ -77,7 +101,7 @@ fn has_existing_master(target: &SshTarget) -> bool {
     if target.port != 22 {
         cmd.args(["-p", &target.port.to_string()]);
     }
-    cmd.arg(format!("{}@{}", target.user, target.host));
+    cmd.arg(target.destination());
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -86,8 +110,7 @@ fn has_existing_master(target: &SshTarget) -> bool {
 
 /// Check if a ControlMaster socket exists in the given directory for a target.
 fn socket_exists_in(sockets_dir: &Path, target: &SshTarget) -> bool {
-    let socket_path = sockets_dir.join(format!("{}@{}-{}", target.user, target.host, target.port));
-    socket_path.exists()
+    sockets_dir.join(target.socket_name()).exists()
 }
 
 /// Establish SSH ControlMaster connections for the given remote URLs.
@@ -105,7 +128,7 @@ pub fn establish_ssh_masters(urls: &[&str]) -> SshMasters {
     let mut seen = std::collections::HashSet::new();
     for url in urls {
         if let Some(target) = parse_ssh_target(url) {
-            let key = format!("{}@{}:{}", target.user, target.host, target.port);
+            let key = target.dedup_key();
             if seen.insert(key) {
                 targets.push(target);
             }
@@ -136,20 +159,39 @@ pub fn establish_ssh_masters(urls: &[&str]) -> SshMasters {
         // If user already has a working master from their own config, skip
         if has_existing_master(target) {
             debug!(
-                "Host {}@{}:{} already has an active ControlMaster",
-                target.user, target.host, target.port
+                "Host {} (port {}) already has an active ControlMaster",
+                target.destination(),
+                target.port
             );
             continue;
         }
 
         // Check if we already have a socket from a previous run
         if socket_exists_in(&sockets_dir, target) {
-            // Socket exists but master isn't active — may be stale.
-            // Remove it and create a fresh master below.
-            let socket_path =
-                sockets_dir.join(format!("{}@{}-{}", target.user, target.host, target.port));
+            let socket_path = sockets_dir.join(target.socket_name());
+            // Probe the socket with ssh -O check -S <path> to see if it's still live
+            let alive = Command::new("ssh")
+                .args(["-O", "check", "-S"])
+                .arg(&socket_path)
+                .arg(target.destination())
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if alive {
+                debug!(
+                    "Reusing live socket for {} from previous run",
+                    target.destination()
+                );
+                any_succeeded = true;
+                any_needed_our_master = true;
+                continue;
+            }
+            // Socket exists but master isn't active — stale. Remove and recreate.
             let _ = std::fs::remove_file(&socket_path);
-            debug!("Removed stale socket for {}@{}", target.user, target.host);
+            debug!("Removed stale socket for {}", target.destination());
         }
 
         any_needed_our_master = true;
@@ -174,7 +216,7 @@ pub fn establish_ssh_masters(urls: &[&str]) -> SshMasters {
         if target.port != 22 {
             cmd.args(["-p", &target.port.to_string()]);
         }
-        cmd.arg(format!("{}@{}", target.user, target.host));
+        cmd.arg(target.destination());
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -182,18 +224,21 @@ pub fn establish_ssh_masters(urls: &[&str]) -> SshMasters {
         match cmd.status() {
             Ok(s) if s.success() => {
                 debug!(
-                    "Established SSH ControlMaster for {}@{}:{}",
-                    target.user, target.host, target.port
+                    "Established SSH ControlMaster for {} (port {})",
+                    target.destination(),
+                    target.port
                 );
                 any_succeeded = true;
             }
             Ok(s) => warn!(
-                "SSH master for {}@{}:{} exited with status {s}",
-                target.user, target.host, target.port
+                "SSH master for {} (port {}) exited with status {s}",
+                target.destination(),
+                target.port
             ),
             Err(e) => warn!(
-                "Failed to spawn SSH master for {}@{}:{}: {e}",
-                target.user, target.host, target.port
+                "Failed to spawn SSH master for {} (port {}): {e}",
+                target.destination(),
+                target.port
             ),
         }
     }
@@ -221,7 +266,7 @@ pub fn establish_ssh_masters(urls: &[&str]) -> SshMasters {
 /// processing, not via shell expansion.
 pub fn git_ssh_command(sockets_dir: &Path) -> String {
     format!(
-        "ssh -o ControlMaster=auto -o 'ControlPath={sockets}/%r@%h-%p' -o ControlPersist=600",
+        "ssh -o ControlMaster=auto -o 'ControlPath={sockets}/%r@%h-%p' -o ControlPersist=600 -o ConnectTimeout=10",
         sockets = sockets_dir.display()
     )
 }
@@ -250,7 +295,7 @@ mod tests {
     fn test_socket_exists_in_nonexistent() {
         let dir = tempfile::tempdir().unwrap();
         let target = SshTarget {
-            user: "git".into(),
+            user: Some("git".into()),
             host: "github.com".into(),
             port: 22,
         };
@@ -262,7 +307,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("git@github.com-22"), "").unwrap();
         let target = SshTarget {
-            user: "git".into(),
+            user: Some("git".into()),
             host: "github.com".into(),
             port: 22,
         };
@@ -272,7 +317,7 @@ mod tests {
     #[test]
     fn test_parse_ssh_target_scp_style() {
         let t = parse_ssh_target("git@github.com:org/repo.git").unwrap();
-        assert_eq!(t.user, "git");
+        assert_eq!(t.user.as_deref(), Some("git"));
         assert_eq!(t.host, "github.com");
         assert_eq!(t.port, 22);
     }
@@ -280,7 +325,7 @@ mod tests {
     #[test]
     fn test_parse_ssh_target_ssh_url() {
         let t = parse_ssh_target("ssh://alice@example.com:2222/repo.git").unwrap();
-        assert_eq!(t.user, "alice");
+        assert_eq!(t.user.as_deref(), Some("alice"));
         assert_eq!(t.host, "example.com");
         assert_eq!(t.port, 2222);
     }
@@ -288,7 +333,7 @@ mod tests {
     #[test]
     fn test_parse_ssh_target_ssh_url_default_port() {
         let t = parse_ssh_target("ssh://git@github.com/org/repo.git").unwrap();
-        assert_eq!(t.user, "git");
+        assert_eq!(t.user.as_deref(), Some("git"));
         assert_eq!(t.host, "github.com");
         assert_eq!(t.port, 22);
     }
@@ -301,7 +346,7 @@ mod tests {
     #[test]
     fn test_has_existing_master_nonexistent_host() {
         let target = SshTarget {
-            user: "git".into(),
+            user: Some("git".into()),
             host: "nonexistent-host-12345.example.com".into(),
             port: 22,
         };
@@ -313,10 +358,46 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("alice@example.com-2222"), "").unwrap();
         let target = SshTarget {
-            user: "alice".into(),
+            user: Some("alice".into()),
             host: "example.com".into(),
             port: 2222,
         };
         assert!(socket_exists_in(dir.path(), &target));
+    }
+
+    #[test]
+    fn test_parse_ssh_target_no_user_ssh_url() {
+        let t = parse_ssh_target("ssh://example.com/repo.git").unwrap();
+        assert_eq!(t.user, None);
+        assert_eq!(t.host, "example.com");
+        assert_eq!(t.destination(), "example.com");
+    }
+
+    #[test]
+    fn test_parse_ssh_target_no_user_scp_style() {
+        let t = parse_ssh_target("example.com:org/repo.git").unwrap();
+        assert_eq!(t.user, None);
+        assert_eq!(t.host, "example.com");
+        assert_eq!(t.destination(), "example.com");
+    }
+
+    #[test]
+    fn test_socket_name_no_user() {
+        let target = SshTarget {
+            user: None,
+            host: "example.com".into(),
+            port: 22,
+        };
+        assert_eq!(target.socket_name(), "_@example.com-22");
+    }
+
+    #[test]
+    fn test_destination_with_user() {
+        let target = SshTarget {
+            user: Some("alice".into()),
+            host: "example.com".into(),
+            port: 22,
+        };
+        assert_eq!(target.destination(), "alice@example.com");
     }
 }

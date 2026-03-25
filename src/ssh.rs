@@ -28,6 +28,8 @@ pub fn discover_ssh_urls(cwd: &Path) -> Vec<String> {
 /// A remote URL mismatch between .meta config and the actual repo.
 pub(crate) struct RemoteMismatch {
     pub name: String,
+    /// The configured path (may differ from name for custom paths / nested repos).
+    pub path: String,
     pub expected: String,
     pub actual: String,
 }
@@ -62,6 +64,7 @@ pub(crate) fn find_remote_mismatches(cwd: &Path) -> Vec<RemoteMismatch> {
         if !meta_git_lib::urls_match(&actual_url, expected_url) {
             mismatches.push(RemoteMismatch {
                 name: project.name.clone(),
+                path: project.path.clone(),
                 expected: expected_url.clone(),
                 actual: actual_url,
             });
@@ -95,6 +98,9 @@ pub(crate) fn warn_remote_mismatches(cwd: &Path) {
     eprintln!();
     eprintln!("  Fix manually with:");
     for m in &mismatches {
-        eprintln!("    git -C {} remote set-url origin {}", m.name, m.expected);
+        eprintln!(
+            "    git -C '{}' remote set-url origin '{}'",
+            m.path, m.expected
+        );
     }
 }
