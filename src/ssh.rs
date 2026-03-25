@@ -96,9 +96,6 @@ pub(crate) fn warn_remote_mismatches(cwd: &Path) {
     eprintln!();
     eprintln!("  Fix manually with:");
     for m in &mismatches {
-        eprintln!(
-            "    git -C {} remote set-url origin {}",
-            m.name, m.expected
-        );
+        eprintln!("    git -C {} remote set-url origin {}", m.name, m.expected);
     }
 }
