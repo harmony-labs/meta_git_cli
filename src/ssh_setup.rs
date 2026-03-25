@@ -36,16 +36,27 @@ impl SshTarget {
         }
     }
 
-    /// Key for deduplication and socket naming. Uses `_` for absent user so
-    /// sockets from different resolution contexts don't collide.
+    /// Key for socket naming. When the URL omits a user, SSH resolves `%r`
+    /// to the current OS user, so we must match that to find our own sockets.
     fn socket_name(&self) -> String {
-        let user_part = self.user.as_deref().unwrap_or("_");
+        let user_part = self.resolved_user();
         format!("{user_part}@{}-{}", self.host, self.port)
+    }
+
+    /// The effective SSH user: explicit if provided, otherwise the OS user
+    /// (matching what SSH resolves `%r` to).
+    fn resolved_user(&self) -> String {
+        match &self.user {
+            Some(u) => u.clone(),
+            None => std::env::var("USER")
+                .or_else(|_| std::env::var("LOGNAME"))
+                .unwrap_or_else(|_| "_".to_string()),
+        }
     }
 
     /// Key for deduplication.
     fn dedup_key(&self) -> String {
-        let user_part = self.user.as_deref().unwrap_or("_");
+        let user_part = self.resolved_user();
         format!("{user_part}@{}:{}", self.host, self.port)
     }
 }
@@ -388,7 +399,11 @@ mod tests {
             host: "example.com".into(),
             port: 22,
         };
-        assert_eq!(target.socket_name(), "_@example.com-22");
+        // Should resolve to the OS user, matching SSH's %r expansion
+        let os_user = std::env::var("USER")
+            .or_else(|_| std::env::var("LOGNAME"))
+            .unwrap_or_else(|_| "_".to_string());
+        assert_eq!(target.socket_name(), format!("{os_user}@example.com-22"));
     }
 
     #[test]
