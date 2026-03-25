@@ -6,11 +6,11 @@ use std::path::Path;
 /// Falls back to ["github.com"] if no .meta config is found or no SSH URLs exist.
 pub fn discover_ssh_hosts(cwd: &Path) -> Vec<String> {
     let Some((config_path, _format)) = meta_core::config::find_meta_config(cwd, None) else {
-        return vec!["github.com".to_string()];
+        return vec![];
     };
 
     let Ok((projects, _ignore)) = meta_core::config::parse_meta_config(&config_path) else {
-        return vec!["github.com".to_string()];
+        return vec![];
     };
 
     let hosts: BTreeSet<String> = projects
@@ -19,11 +19,7 @@ pub fn discover_ssh_hosts(cwd: &Path) -> Vec<String> {
         .filter_map(|repo| meta_git_lib::extract_ssh_host(repo))
         .collect();
 
-    if hosts.is_empty() {
-        vec!["github.com".to_string()]
-    } else {
-        hosts.into_iter().collect()
-    }
+    hosts.into_iter().collect()
 }
 
 /// A remote URL mismatch between .meta config and the actual repo.

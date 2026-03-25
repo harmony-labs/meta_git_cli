@@ -129,10 +129,17 @@ fn execute_raw_git_command(
     // connections and inject GIT_SSH_COMMAND into each planned command.
     if options.parallel && is_remote_command(command) {
         let hosts = ssh::discover_ssh_hosts(cwd);
-        let host_refs: Vec<&str> = hosts.iter().map(|s| s.as_str()).collect();
+        // Convert hostnames to SCP-style URLs for establish_ssh_masters
+        let urls: Vec<String> = hosts.iter().map(|h| format!("git@{h}:")).collect();
+        let url_refs: Vec<&str> = urls.iter().map(|s| s.as_str()).collect();
 
-        let ssh_env = ssh_setup::establish_ssh_masters(&host_refs)
-            .map(|dir| ssh_setup::git_ssh_command(&dir));
+        let (ssh_env, parallel_ok) = match ssh_setup::establish_ssh_masters(&url_refs) {
+            ssh_setup::SshMasters::OurSockets(dir) => {
+                (Some(ssh_setup::git_ssh_command(&dir)), true)
+            }
+            ssh_setup::SshMasters::UserManaged => (None, true),
+            ssh_setup::SshMasters::Failed => (None, false),
+        };
 
         // Inject GIT_SSH_COMMAND into every planned command's env
         let commands: Vec<PlannedCommand> = commands
@@ -152,7 +159,7 @@ fn execute_raw_git_command(
         // Stagger spawns by 25ms to prevent SSH socket saturation.
         const SSH_SPAWN_STAGGER_MS: u64 = 25;
 
-        if ssh_env.is_some() {
+        if parallel_ok {
             CommandResult::FullPlan(ExecutionPlan {
                 pre_commands: vec![],
                 commands,
@@ -293,7 +300,7 @@ mod tests {
         let help = get_help_text();
         assert!(help.contains("meta git clone"));
         assert!(help.contains("meta git update"));
-        assert!(help.contains("meta git update"));
+        assert!(!help.contains("meta git setup-ssh"));
     }
 
     #[test]

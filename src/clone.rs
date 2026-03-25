@@ -119,12 +119,9 @@ pub(crate) fn execute_git_clone(
     }
 
     // Set up SSH ControlMaster for the meta repo's host before cloning
-    let initial_host = meta_git_lib::extract_ssh_host(&url);
-    let mut ssh_cmd = if let Some(ref host) = initial_host {
-        ssh_setup::establish_ssh_masters(&[host.as_str()])
-            .map(|dir| ssh_setup::git_ssh_command(&dir))
-    } else {
-        None
+    let mut ssh_cmd = match ssh_setup::establish_ssh_masters(&[url.as_str()]) {
+        ssh_setup::SshMasters::OurSockets(dir) => Some(ssh_setup::git_ssh_command(&dir)),
+        ssh_setup::SshMasters::UserManaged | ssh_setup::SshMasters::Failed => None,
     };
 
     println!("Cloning meta repository: {url}");
@@ -167,18 +164,19 @@ pub(crate) fn execute_git_clone(
     }
 
     // Establish SSH masters for any additional hosts in the queue
-    let queue_hosts = queue.peek_ssh_hosts();
-    if !queue_hosts.is_empty() {
-        let host_refs: Vec<&str> = queue_hosts.iter().map(|s| s.as_str()).collect();
-        match ssh_setup::establish_ssh_masters(&host_refs) {
-            Some(sockets_dir) => {
+    let queue_urls = queue.peek_urls();
+    if !queue_urls.is_empty() {
+        let url_refs: Vec<&str> = queue_urls.iter().map(|s| s.as_str()).collect();
+        match ssh_setup::establish_ssh_masters(&url_refs) {
+            ssh_setup::SshMasters::OurSockets(sockets_dir) => {
                 ssh_cmd = Some(ssh_setup::git_ssh_command(&sockets_dir));
             }
-            None if ssh_cmd.is_none() => {
+            ssh_setup::SshMasters::UserManaged => {} // parallel OK, no override needed
+            ssh_setup::SshMasters::Failed if ssh_cmd.is_none() => {
                 log::warn!("SSH multiplexing setup failed, falling back to serial cloning");
                 parallel = 1;
             }
-            _ => {} // partial failure but initial host works
+            ssh_setup::SshMasters::Failed => {} // initial host works
         }
     }
 

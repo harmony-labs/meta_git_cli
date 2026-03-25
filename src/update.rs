@@ -14,9 +14,6 @@ pub(crate) fn execute_git_update(
     dry_run: bool,
     cwd: &std::path::Path,
 ) -> anyhow::Result<CommandResult> {
-    // Check for remote URL mismatches before updating
-    crate::ssh::warn_remote_mismatches(cwd);
-
     // Determine if we're in recursive mode (projects list provided by meta_cli)
     let recursive = !projects.is_empty();
 
@@ -38,6 +35,11 @@ pub(crate) fn execute_git_update(
         // Normal mode - just check current directory
         vec![cwd.to_path_buf()]
     };
+
+    // Check for remote URL mismatches in all meta roots
+    for dir in &dirs_to_check {
+        crate::ssh::warn_remote_mismatches(dir);
+    }
 
     // First pass: check for orphaned repos and warn user
     for dir in &dirs_to_check {
@@ -111,13 +113,14 @@ pub(crate) fn execute_git_update(
     }
 
     // Establish SSH multiplexing before parallel clones
-    let queue_hosts = queue.peek_ssh_hosts();
+    let queue_urls = queue.peek_urls();
     let mut parallel = 4_usize;
-    let ssh_cmd = if !queue_hosts.is_empty() {
-        let host_refs: Vec<&str> = queue_hosts.iter().map(|s| s.as_str()).collect();
-        match ssh_setup::establish_ssh_masters(&host_refs) {
-            Some(sockets_dir) => Some(ssh_setup::git_ssh_command(&sockets_dir)),
-            None => {
+    let ssh_cmd = if !queue_urls.is_empty() {
+        let url_refs: Vec<&str> = queue_urls.iter().map(|s| s.as_str()).collect();
+        match ssh_setup::establish_ssh_masters(&url_refs) {
+            ssh_setup::SshMasters::OurSockets(dir) => Some(ssh_setup::git_ssh_command(&dir)),
+            ssh_setup::SshMasters::UserManaged => None, // parallel OK
+            ssh_setup::SshMasters::Failed => {
                 log::warn!("SSH multiplexing setup failed, falling back to serial cloning");
                 parallel = 1;
                 None
