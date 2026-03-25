@@ -2,9 +2,11 @@ use console::style;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-/// Discover unique SSH hosts from the .meta config in the current directory.
+/// Discover unique SSH remote URLs from the .meta config in the current directory.
+/// Returns the full SSH URLs (preserving user, host, and port) so callers can
+/// pass them directly to `establish_ssh_masters` without information loss.
 /// Returns an empty list if no .meta config is found or no SSH URLs exist.
-pub fn discover_ssh_hosts(cwd: &Path) -> Vec<String> {
+pub fn discover_ssh_urls(cwd: &Path) -> Vec<String> {
     let Some((config_path, _format)) = meta_core::config::find_meta_config(cwd, None) else {
         return vec![];
     };
@@ -13,13 +15,14 @@ pub fn discover_ssh_hosts(cwd: &Path) -> Vec<String> {
         return vec![];
     };
 
-    let hosts: BTreeSet<String> = projects
+    let urls: BTreeSet<String> = projects
         .iter()
         .filter_map(|p| p.repo.as_ref())
-        .filter_map(|repo| meta_git_lib::extract_ssh_host(repo))
+        .filter(|repo| meta_git_lib::extract_ssh_host(repo).is_some())
+        .cloned()
         .collect();
 
-    hosts.into_iter().collect()
+    urls.into_iter().collect()
 }
 
 /// A remote URL mismatch between .meta config and the actual repo.

@@ -128,15 +128,13 @@ fn execute_raw_git_command(
     // For remote commands running in parallel, establish SSH ControlMaster
     // connections and inject GIT_SSH_COMMAND into each planned command.
     if options.parallel && is_remote_command(command) {
-        let hosts = ssh::discover_ssh_hosts(cwd);
+        let urls = ssh::discover_ssh_urls(cwd);
 
         // HTTPS-only workspaces don't need SSH multiplexing
-        if hosts.is_empty() {
+        if urls.is_empty() {
             return CommandResult::Plan(commands, Some(true));
         }
 
-        // Convert hostnames to SCP-style URLs for establish_ssh_masters
-        let urls: Vec<String> = hosts.iter().map(|h| format!("git@{h}:")).collect();
         let url_refs: Vec<&str> = urls.iter().map(|s| s.as_str()).collect();
 
         let (ssh_env, parallel_ok) = match ssh_setup::establish_ssh_masters(&url_refs) {

@@ -40,7 +40,11 @@ fn parse_ssh_target(url: &str) -> Option<SshTarget> {
             ("git".to_string(), user_host)
         };
         let (host, port) = if let Some((h, p)) = host_port.split_once(':') {
-            (h.to_string(), p.parse::<u16>().unwrap_or(22))
+            let port = p.parse::<u16>().unwrap_or_else(|_| {
+                warn!("Invalid port '{p}' in SSH URL, defaulting to 22");
+                22
+            });
+            (h.to_string(), port)
         } else {
             (host_port.to_string(), 22)
         };
@@ -150,20 +154,20 @@ pub fn establish_ssh_masters(urls: &[&str]) -> SshMasters {
 
         any_needed_our_master = true;
 
-        let control_path = format!("{}/{}", sockets_dir.display(), "%r@%h-%p");
+        // Single-quote ControlPath to handle spaces in sockets_dir,
+        // consistent with git_ssh_command() below.
+        let control_path = format!("'{}/{}'", sockets_dir.display(), "%r@%h-%p");
         let mut cmd = Command::new("ssh");
         cmd.args([
             "-fNM",
             "-o",
             "ControlMaster=auto",
             "-o",
-            &format!("ControlPath={control_path}"),
+            &format!("ControlPath={}", control_path),
             "-o",
             "ControlPersist=600",
             "-o",
             "ConnectTimeout=10",
-            "-o",
-            "StrictHostKeyChecking=accept-new",
         ]);
         if target.port != 22 {
             cmd.args(["-p", &target.port.to_string()]);
