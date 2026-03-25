@@ -154,16 +154,18 @@ pub fn establish_ssh_masters(urls: &[&str]) -> SshMasters {
 
         any_needed_our_master = true;
 
-        // Single-quote ControlPath to handle spaces in sockets_dir,
-        // consistent with git_ssh_command() below.
-        let control_path = format!("'{}/{}'", sockets_dir.display(), "%r@%h-%p");
+        // No shell quoting needed here — Command::new bypasses the shell,
+        // so spaces in the path are handled correctly as a single argument.
+        // (git_ssh_command() uses single quotes because GIT_SSH_COMMAND is
+        // evaluated by the shell.)
+        let control_path = format!("{}/{}", sockets_dir.display(), "%r@%h-%p");
         let mut cmd = Command::new("ssh");
         cmd.args([
             "-fNM",
             "-o",
             "ControlMaster=auto",
             "-o",
-            &format!("ControlPath={}", control_path),
+            &format!("ControlPath={control_path}"),
             "-o",
             "ControlPersist=600",
             "-o",
