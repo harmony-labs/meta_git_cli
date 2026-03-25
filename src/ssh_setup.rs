@@ -46,7 +46,7 @@ fn parse_ssh_target(url: &str) -> Option<SshTarget> {
         };
         Some(SshTarget { user, host, port })
     } else if url.starts_with("https://") || url.starts_with("http://") {
-        return None;
+        None
     } else if let Some((user_host, _path)) = url.split_once(':') {
         // git@github.com:org/repo.git (SCP-style)
         let (user, host) = if let Some((u, h)) = user_host.split_once('@') {
