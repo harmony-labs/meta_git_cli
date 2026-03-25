@@ -35,10 +35,6 @@ fn main() {
         "worktree".to_string(),
         "Create isolated worktree sets for multi-repo branches".to_string(),
     );
-    adapted.insert(
-        "setup-ssh".to_string(),
-        "Configure SSH multiplexing for faster operations".to_string(),
-    );
     command_sections.insert(
         "Adapted Commands (meta-specific behavior)".to_string(),
         adapted,
@@ -63,7 +59,6 @@ fn main() {
                 "git clone".to_string(),
                 "git status".to_string(),
                 "git update".to_string(),
-                "git setup-ssh".to_string(),
                 "git commit".to_string(),
                 "git snapshot".to_string(),
                 "git snapshot create".to_string(),

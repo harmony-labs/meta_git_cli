@@ -1,4 +1,5 @@
 use crate::clone_worker::clone_with_queue;
+use crate::ssh_setup;
 use console::style;
 use indicatif::MultiProgress;
 use meta_core::config;
@@ -13,6 +14,9 @@ pub(crate) fn execute_git_update(
     dry_run: bool,
     cwd: &std::path::Path,
 ) -> anyhow::Result<CommandResult> {
+    // Check for remote URL mismatches before updating
+    crate::ssh::warn_remote_mismatches(cwd);
+
     // Determine if we're in recursive mode (projects list provided by meta_cli)
     let recursive = !projects.is_empty();
 
@@ -106,6 +110,23 @@ pub(crate) fn execute_git_update(
         return Ok(CommandResult::Message(String::new()));
     }
 
+    // Establish SSH multiplexing before parallel clones
+    let queue_hosts = queue.peek_ssh_hosts();
+    let mut parallel = 4_usize;
+    let ssh_cmd = if !queue_hosts.is_empty() {
+        let host_refs: Vec<&str> = queue_hosts.iter().map(|s| s.as_str()).collect();
+        match ssh_setup::establish_ssh_masters(&host_refs) {
+            Some(sockets_dir) => Some(ssh_setup::git_ssh_command(&sockets_dir)),
+            None => {
+                log::warn!("SSH multiplexing setup failed, falling back to serial cloning");
+                parallel = 1;
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     println!(
         "Cloning {} missing repositories{}",
         initial_count,
@@ -114,8 +135,7 @@ pub(crate) fn execute_git_update(
 
     let mp = MultiProgress::new();
 
-    // Use the queue-based cloning system (with parallelism of 4 to avoid SSH issues)
-    clone_with_queue(Arc::clone(&queue), 4, &mp)?;
+    clone_with_queue(Arc::clone(&queue), parallel, &mp, ssh_cmd.as_deref())?;
 
     let (completed, total) = queue.get_counts();
     if total > initial_count {

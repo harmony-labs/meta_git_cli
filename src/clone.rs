@@ -1,4 +1,5 @@
 use crate::clone_worker::clone_with_queue;
+use crate::ssh_setup;
 use console::style;
 use indicatif::MultiProgress;
 use meta_core::config;
@@ -117,11 +118,23 @@ pub(crate) fn execute_git_clone(
         return Ok(CommandResult::Message(String::new()));
     }
 
+    // Set up SSH ControlMaster for the meta repo's host before cloning
+    let initial_host = meta_git_lib::extract_ssh_host(&url);
+    let mut ssh_cmd = if let Some(ref host) = initial_host {
+        ssh_setup::establish_ssh_masters(&[host.as_str()])
+            .map(|dir| ssh_setup::git_ssh_command(&dir))
+    } else {
+        None
+    };
+
     println!("Cloning meta repository: {url}");
     let mut clone_cmd = Command::new("git");
     clone_cmd.arg("clone").args(&git_clone_args).arg(&url);
     if let Some(ref dir) = dir_arg {
         clone_cmd.arg(dir);
+    }
+    if let Some(ref ssh) = ssh_cmd {
+        clone_cmd.env("GIT_SSH_COMMAND", ssh);
     }
     clone_cmd.current_dir(cwd);
     let status = clone_cmd.status()?;
@@ -153,6 +166,22 @@ pub(crate) fn execute_git_clone(
         ));
     }
 
+    // Establish SSH masters for any additional hosts in the queue
+    let queue_hosts = queue.peek_ssh_hosts();
+    if !queue_hosts.is_empty() {
+        let host_refs: Vec<&str> = queue_hosts.iter().map(|s| s.as_str()).collect();
+        match ssh_setup::establish_ssh_masters(&host_refs) {
+            Some(sockets_dir) => {
+                ssh_cmd = Some(ssh_setup::git_ssh_command(&sockets_dir));
+            }
+            None if ssh_cmd.is_none() => {
+                log::warn!("SSH multiplexing setup failed, falling back to serial cloning");
+                parallel = 1;
+            }
+            _ => {} // partial failure but initial host works
+        }
+    }
+
     println!(
         "Cloning {} child repositories{}",
         initial_count,
@@ -162,7 +191,7 @@ pub(crate) fn execute_git_clone(
     let mp = MultiProgress::new();
 
     // Use the queue-based cloning system
-    clone_with_queue(Arc::clone(&queue), parallel, &mp)?;
+    clone_with_queue(Arc::clone(&queue), parallel, &mp, ssh_cmd.as_deref())?;
 
     let (completed, total) = queue.get_counts();
     if total > initial_count {

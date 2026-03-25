@@ -1,135 +1,134 @@
-//! SSH setup helpers for parallel git operations.
+//! Self-contained SSH multiplexing for parallel git operations.
 //!
-//! This module provides functions to generate SSH ControlMaster pre-commands
-//! that establish persistent connections before parallel git operations.
-//! This prevents the race condition where multiple parallel connections
-//! all try to become the ControlMaster simultaneously.
+//! Establishes SSH ControlMaster connections using explicit `-o` flags,
+//! with no dependency on `~/.ssh/config`. Returns a `GIT_SSH_COMMAND`
+//! value that git subprocesses use to share the established connections.
 
-use meta_plugin_protocol::PlannedCommand;
-use std::path::Path;
+use log::{debug, warn};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
-/// Generate SSH ControlMaster pre-commands for the given hosts.
+/// Check if an existing ControlMaster connection is active for a host.
 ///
-/// Returns commands that establish persistent SSH connections before
-/// parallel git operations, preventing the ControlMaster race condition.
-///
-/// Only generates commands for hosts that:
-/// 1. Have multiplexing configured (ControlMaster in ~/.ssh/config)
-/// 2. Don't already have an active socket
-pub fn ssh_pre_commands(hosts: &[&str]) -> Vec<PlannedCommand> {
-    hosts
-        .iter()
-        .filter(|host| needs_master_connection(host))
-        .map(|host| PlannedCommand {
-            dir: ".".to_string(),
-            cmd: format!(
-                "ssh -fNM -o ControlMaster=auto -o ControlPath=~/.ssh/sockets/%r@%h-%p -o ControlPersist=600 -o ConnectTimeout=10 git@{host}"
-            ),
-            env: None,
-        })
-        .collect()
+/// Uses `ssh -O check` which respects the user's own SSH config.
+/// Returns true if the user already has a working master connection,
+/// regardless of how it was configured.
+fn has_existing_master(host: &str) -> bool {
+    Command::new("ssh")
+        .args(["-O", "check", &format!("git@{host}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
-/// Check if we need to establish a master connection for this host.
-///
-/// Returns true if:
-/// - SSH multiplexing is configured for this host
-/// - No active ControlMaster socket exists
-fn needs_master_connection(host: &str) -> bool {
-    // If socket already exists, no need to create another
-    if socket_exists(host) {
-        return false;
-    }
-
-    // Check if multiplexing is configured
-    is_multiplexing_configured(host)
+/// Check if a ControlMaster socket exists in the given directory for a host.
+fn socket_exists_in(sockets_dir: &Path, host: &str) -> bool {
+    let socket_path = sockets_dir.join(format!("git@{host}-22"));
+    socket_path.exists()
 }
 
-/// Check if ControlMaster socket already exists for host.
-pub fn socket_exists(host: &str) -> bool {
-    let home = match std::env::var("HOME") {
-        Ok(h) => h,
-        Err(_) => return false,
-    };
-
-    // Check common socket path patterns
-    let socket_patterns = [
-        format!("{home}/.ssh/sockets/git@{host}-22"),
-        format!("{home}/.ssh/sockets/%r@%h-%p"), // literal pattern (shouldn't exist)
-    ];
-
-    for pattern in &socket_patterns {
-        if Path::new(pattern).exists() {
-            return true;
+/// Establish SSH ControlMaster connections for the given hosts.
+///
+/// Uses explicit `-o` flags so this works without `~/.ssh/config` having
+/// multiplexing configured. If the user already has working ControlMaster
+/// connections (from their own config), those are respected and we skip
+/// setting up our own.
+///
+/// Returns `Some(sockets_dir)` if at least one master was established
+/// (or already existed via our sockets dir). Returns `None` if:
+/// - All hosts already have masters from user config (no override needed)
+/// - Sockets dir couldn't be created
+/// - All host connections failed
+pub fn establish_ssh_masters(hosts: &[&str]) -> Option<PathBuf> {
+    let sockets_dir = match meta_git_lib::ensure_ssh_sockets_dir() {
+        Ok(Some(dir)) => dir,
+        Ok(None) => {
+            warn!("Could not determine HOME directory for SSH sockets");
+            return None;
         }
-    }
-
-    false
-}
-
-/// Check if SSH multiplexing is configured for the given host.
-///
-/// Looks for ControlMaster settings in ~/.ssh/config.
-fn is_multiplexing_configured(host: &str) -> bool {
-    let home = match std::env::var("HOME") {
-        Ok(h) => h,
-        Err(_) => return false,
+        Err(e) => {
+            warn!("Failed to create SSH sockets directory: {e}");
+            return None;
+        }
     };
 
-    let config_path = format!("{home}/.ssh/config");
-    let config_content = match std::fs::read_to_string(&config_path) {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
+    let mut any_needed_our_master = false;
+    let mut any_succeeded = false;
 
-    // Parse SSH config to check for ControlMaster
-    // This is a simplified parser - SSH config is complex
-    let mut in_matching_host_block = false;
-    let mut found_control_master = false;
-
-    for line in config_content.lines() {
-        let line = line.trim();
-
-        // Skip comments and empty lines
-        if line.starts_with('#') || line.is_empty() {
+    for host in hosts {
+        // If user already has a working master from their own config, skip
+        if has_existing_master(host) {
+            debug!("Host {host} already has an active ControlMaster");
             continue;
         }
 
-        // Check for Host directive
-        if line.to_lowercase().starts_with("host ") {
-            let hosts: Vec<&str> = line[5..].split_whitespace().collect();
-            in_matching_host_block = hosts.iter().any(|h| {
-                // Handle wildcards
-                if *h == "*" {
-                    true
-                } else if h.contains('*') {
-                    // Simple wildcard matching (e.g., "*.github.com")
-                    let pattern = h.replace('*', "");
-                    host.contains(&pattern)
-                } else {
-                    *h == host
-                }
-            });
+        // Check if we already have a socket from a previous run
+        if socket_exists_in(&sockets_dir, host) {
+            debug!("Socket already exists for {host}");
+            any_needed_our_master = true;
+            any_succeeded = true;
+            continue;
         }
 
-        // Check for ControlMaster in matching block or global (*) block
-        if in_matching_host_block
-            && (line.to_lowercase().starts_with("controlmaster ")
-                || line.to_lowercase().starts_with("controlmaster="))
-        {
-            let value = line
-                .split_once(char::is_whitespace)
-                .or_else(|| line.split_once('='))
-                .map(|(_, v)| v.trim())
-                .unwrap_or("");
+        any_needed_our_master = true;
 
-            if value == "auto" || value == "yes" || value == "autoask" {
-                found_control_master = true;
+        let control_path = format!("{}/{}", sockets_dir.display(), "%r@%h-%p");
+        let status = Command::new("ssh")
+            .args([
+                "-fNM",
+                "-o",
+                "ControlMaster=auto",
+                "-o",
+                &format!("ControlPath={control_path}"),
+                "-o",
+                "ControlPersist=600",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "StrictHostKeyChecking=accept-new",
+                &format!("git@{host}"),
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                debug!("Established SSH ControlMaster for {host}");
+                any_succeeded = true;
             }
+            Ok(s) => warn!("SSH master for {host} exited with status {s}"),
+            Err(e) => warn!("Failed to spawn SSH master for {host}: {e}"),
         }
     }
 
-    found_control_master
+    // If no host needed our master (all had existing connections), return None
+    // so callers don't override GIT_SSH_COMMAND unnecessarily
+    if !any_needed_our_master {
+        debug!("All hosts have existing ControlMaster connections, no override needed");
+        return None;
+    }
+
+    if any_succeeded {
+        Some(sockets_dir)
+    } else {
+        None
+    }
+}
+
+/// Build a `GIT_SSH_COMMAND` value that reuses established ControlMaster connections.
+///
+/// Set this on git subprocesses so they share the pre-established connections
+/// without needing `~/.ssh/config` to be configured.
+pub fn git_ssh_command(sockets_dir: &Path) -> String {
+    format!(
+        "ssh -o ControlMaster=auto -o ControlPath={sockets}/%r@%h-%p -o ControlPersist=600",
+        sockets = sockets_dir.display()
+    )
 }
 
 #[cfg(test)]
@@ -137,35 +136,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ssh_pre_commands_generates_correct_format() {
-        // Note: This test may not generate commands if multiplexing isn't configured
-        // or sockets already exist. We test the format when commands ARE generated.
-        let commands = ssh_pre_commands(&["example.com"]);
-
-        // If a command was generated, verify its format
-        for cmd in commands {
-            assert!(cmd.cmd.contains("ssh -fNM"));
-            assert!(cmd.cmd.contains("ControlMaster=auto"));
-            assert!(cmd.cmd.contains("ControlPersist=600"));
-            assert!(cmd.cmd.contains("git@example.com"));
-            assert_eq!(cmd.dir, ".");
-        }
+    fn test_git_ssh_command_format() {
+        let cmd = git_ssh_command(Path::new("/home/user/.ssh/sockets"));
+        assert!(cmd.contains("ControlMaster=auto"));
+        assert!(cmd.contains("ControlPath=/home/user/.ssh/sockets/%r@%h-%p"));
+        assert!(cmd.contains("ControlPersist=600"));
+        // Must NOT contain %% — Rust format! doesn't use % for formatting
+        assert!(!cmd.contains("%%"));
     }
 
     #[test]
-    fn test_socket_exists_nonexistent() {
-        // A host that definitely doesn't have a socket
-        assert!(!socket_exists("nonexistent-host-12345.example.com"));
+    fn test_socket_exists_in_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!socket_exists_in(dir.path(), "github.com"));
     }
 
     #[test]
-    fn test_needs_master_connection_respects_existing_socket() {
-        // If socket exists, should return false
-        // We can't easily test this without creating actual sockets,
-        // but we can verify the logic flow
-        let host = "test-host-that-does-not-exist.example.com";
-        // This should check socket_exists first, which will return false
-        // Then check is_multiplexing_configured, which will also likely return false
-        let _ = needs_master_connection(host);
+    fn test_socket_exists_in_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("git@github.com-22"), "").unwrap();
+        assert!(socket_exists_in(dir.path(), "github.com"));
+    }
+
+    #[test]
+    fn test_has_existing_master_nonexistent_host() {
+        // A host that definitely doesn't have a master
+        assert!(!has_existing_master("nonexistent-host-12345.example.com"));
     }
 }
