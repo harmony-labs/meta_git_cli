@@ -140,8 +140,10 @@ pub(crate) fn handle_create(
         )?
     };
 
-    // Expand meta: true repos to include their child repos in the worktree
-    let repos_to_create = expand_meta_children(repos_to_create, strict)?;
+    // For nested aliases like "gitkb/core", ensure intermediate meta: true
+    // parents ("gitkb") get worktrees too — the thin spine from root to target.
+    let repos_to_create =
+        ensure_intermediate_parents(&meta_dir, repos_to_create, name, branch_flag)?;
 
     // Apply --from-pr: override branch for the matching repo and fetch
     let mut repos_to_create = repos_to_create;
@@ -522,84 +524,85 @@ fn build_nested_dep_graph(meta_dir: &std::path::Path) -> Result<DependencyGraph>
     DependencyGraph::build(project_deps)
 }
 
-/// Expand `repos_to_create` to include children of `meta: true` projects.
+/// Ensure intermediate `meta: true` parent repos get worktrees for nested aliases.
 ///
-/// When a repo in the list has its own `.meta.yaml` (i.e., it's a nested meta
-/// workspace), its child projects are added to the list so they get worktrees
-/// too. Without this, the worktree for a `meta: true` repo like `gitkb/` would
-/// be missing `gitkb/core/`, `gitkb/ui/`, etc.
+/// When `repos_to_create` contains a nested alias like `"gitkb/core"`, the
+/// intermediate parent `"gitkb"` needs a worktree too — `git worktree add`
+/// for `gitkb/core` requires `gitkb/` to exist as a checkout, not an empty dir.
 ///
-/// Children inherit the task branch so the entire workspace is on the same branch.
-/// Uses `walk_meta_tree` which handles full recursive descent — if a child is
-/// itself `meta: true`, its children are included too.
-fn expand_meta_children(
+/// This creates the "thin spine" from root to each target: only the ancestors
+/// that are needed, not siblings. Asking for `gitkb/core` adds `gitkb` but
+/// NOT `gitkb/ui`, `gitkb/docs`, etc.
+fn ensure_intermediate_parents(
+    meta_dir: &std::path::Path,
     repos: Vec<(String, std::path::PathBuf, String)>,
-    strict: bool,
+    worktree_name: &str,
+    branch_flag: Option<&str>,
 ) -> Result<Vec<(String, std::path::PathBuf, String)>> {
-    // Two-pass approach: first collect all explicit aliases so they take priority
-    // over synthesized children (prevents order-dependent override issues when
-    // both a parent and an explicit child with a custom branch are in the list).
-    let explicit_aliases: HashSet<String> = repos.iter().map(|(a, _, _)| a.clone()).collect();
+    let existing: HashSet<String> = repos.iter().map(|(a, _, _)| a.clone()).collect();
 
-    let mut expanded = Vec::new();
-    let mut seen = HashSet::new();
+    let mut to_add: Vec<(String, std::path::PathBuf, String)> = Vec::new();
+    let mut added: HashSet<String> = HashSet::new();
 
-    for (alias, source, branch) in repos {
-        if !seen.insert(alias.clone()) {
-            continue;
-        }
-        expanded.push((alias.clone(), source.clone(), branch.clone()));
-
-        // Skip root repo
-        if alias == "." {
+    for (alias, _source, _branch) in &repos {
+        // Only nested aliases need intermediate parents
+        if !alias.contains('/') || alias == "." {
             continue;
         }
 
-        // Check if this project has its own .meta config (meta: true).
-        // Important: use find_meta_config_in (checks only IN this dir),
-        // NOT find_meta_config (which walks UP to parent dirs).
-        if meta_core::config::find_meta_config_in(&source).is_none() {
-            continue;
-        }
+        // Walk up through path segments: "gitkb/core" → check "gitkb"
+        // "a/b/c" → check "a", "a/b"
+        let parts: Vec<&str> = alias.split('/').collect();
+        for i in 1..parts.len() {
+            let parent_alias = parts[..i].join("/");
 
-        // Walk the child's meta tree to find its sub-projects
-        let tree = match meta_core::config::walk_meta_tree(&source, None) {
-            Ok(t) => t,
-            Err(e) => {
-                super::warn_or_bail(
-                    strict,
-                    format!("Failed to walk meta tree for '{alias}': {e}"),
-                )?;
+            // Skip if already in the list or already added
+            if existing.contains(&parent_alias) || !added.insert(parent_alias.clone()) {
                 continue;
             }
-        };
 
-        let project_map = meta_core::config::build_project_map(&tree, &source, "");
-        let mut added = 0usize;
-        for (child_path, (child_fs_path, _info)) in &project_map {
-            let full_alias = format!("{}/{}", alias, child_path);
-            // Skip if this alias was explicitly provided (it will be processed
-            // with its own branch/source from the input list)
-            if explicit_aliases.contains(&full_alias) {
+            // Resolve the parent's source path
+            let parent_source = meta_dir.join(&parent_alias);
+            if !parent_source.exists() {
                 continue;
             }
-            if seen.insert(full_alias.clone()) {
-                // Children inherit the parent's already-resolved branch
-                let child_branch = branch.clone();
-                expanded.push((full_alias, child_fs_path.clone(), child_branch));
-                added += 1;
-            }
-        }
 
-        if added > 0 {
+            // Only add if it's actually a git repo (has .git)
+            if !parent_source.join(".git").exists() {
+                continue;
+            }
+
+            let branch = resolve_branch(worktree_name, branch_flag, None);
             log::info!(
-                "Expanded '{}' (meta: true): added {} child repo{}",
-                alias,
-                added,
-                if added == 1 { "" } else { "s" }
+                "Adding intermediate parent '{}' for nested repo '{}'",
+                parent_alias,
+                alias
             );
+            to_add.push((parent_alias, parent_source, branch));
         }
     }
 
-    Ok(expanded)
+    if to_add.is_empty() {
+        return Ok(repos);
+    }
+
+    // Insert parents before the repos list so they're created first
+    // (the worktree loop creates "." first, then children in order)
+    let mut result = Vec::with_capacity(repos.len() + to_add.len());
+    // Add "." first if present
+    let mut rest = Vec::new();
+    for entry in repos {
+        if entry.0 == "." {
+            result.push(entry);
+        } else {
+            rest.push(entry);
+        }
+    }
+    // Parents next (sorted to ensure parents come before children)
+    to_add.sort_by(|a, b| a.0.cmp(&b.0));
+    result.extend(to_add);
+    // Then the originally requested repos
+    result.extend(rest);
+
+    Ok(result)
 }
