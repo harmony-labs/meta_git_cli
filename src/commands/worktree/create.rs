@@ -566,7 +566,9 @@ fn ensure_intermediate_parents(
             if !parent_source.exists() {
                 log::warn!(
                     "Intermediate parent '{}' for nested repo '{}' not found at {:?}, skipping",
-                    parent_alias, alias, parent_source
+                    parent_alias,
+                    alias,
+                    parent_source
                 );
                 continue;
             }
