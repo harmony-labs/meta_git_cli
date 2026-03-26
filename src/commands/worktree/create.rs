@@ -575,7 +575,7 @@ fn expand_meta_children(
         };
 
         let project_map = meta_core::config::build_project_map(&tree, &source, "");
-        let child_count = project_map.len();
+        let mut added = 0usize;
         for (child_path, (child_fs_path, _info)) in &project_map {
             let full_alias = format!("{}/{}", alias, child_path);
             // Skip if this alias was explicitly provided (it will be processed
@@ -587,15 +587,16 @@ fn expand_meta_children(
                 // Children inherit the parent's already-resolved branch
                 let child_branch = branch.clone();
                 expanded.push((full_alias, child_fs_path.clone(), child_branch));
+                added += 1;
             }
         }
 
-        if child_count > 0 {
+        if added > 0 {
             log::info!(
                 "Expanded '{}' (meta: true): added {} child repo{}",
                 alias,
-                child_count,
-                if child_count == 1 { "" } else { "s" }
+                added,
+                if added == 1 { "" } else { "s" }
             );
         }
     }
