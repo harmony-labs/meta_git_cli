@@ -141,7 +141,7 @@ pub(crate) fn handle_create(
     };
 
     // Expand meta: true repos to include their child repos in the worktree
-    let repos_to_create = expand_meta_children(repos_to_create, name, branch_flag)?;
+    let repos_to_create = expand_meta_children(repos_to_create, strict)?;
 
     // Apply --from-pr: override branch for the matching repo and fetch
     let mut repos_to_create = repos_to_create;
@@ -534,9 +534,13 @@ fn build_nested_dep_graph(meta_dir: &std::path::Path) -> Result<DependencyGraph>
 /// itself `meta: true`, its children are included too.
 fn expand_meta_children(
     repos: Vec<(String, std::path::PathBuf, String)>,
-    worktree_name: &str,
-    branch_flag: Option<&str>,
+    strict: bool,
 ) -> Result<Vec<(String, std::path::PathBuf, String)>> {
+    // Two-pass approach: first collect all explicit aliases so they take priority
+    // over synthesized children (prevents order-dependent override issues when
+    // both a parent and an explicit child with a custom branch are in the list).
+    let explicit_aliases: HashSet<String> = repos.iter().map(|(a, _, _)| a.clone()).collect();
+
     let mut expanded = Vec::new();
     let mut seen = HashSet::new();
 
@@ -562,7 +566,10 @@ fn expand_meta_children(
         let tree = match meta_core::config::walk_meta_tree(&source, None) {
             Ok(t) => t,
             Err(e) => {
-                log::warn!("Failed to walk meta tree for '{}': {}", alias, e);
+                super::warn_or_bail(
+                    strict,
+                    format!("Failed to walk meta tree for '{alias}': {e}"),
+                )?;
                 continue;
             }
         };
@@ -571,8 +578,14 @@ fn expand_meta_children(
         let child_count = project_map.len();
         for (child_path, (child_fs_path, _info)) in &project_map {
             let full_alias = format!("{}/{}", alias, child_path);
+            // Skip if this alias was explicitly provided (it will be processed
+            // with its own branch/source from the input list)
+            if explicit_aliases.contains(&full_alias) {
+                continue;
+            }
             if seen.insert(full_alias.clone()) {
-                let child_branch = resolve_branch(worktree_name, branch_flag, None);
+                // Children inherit the parent's already-resolved branch
+                let child_branch = branch.clone();
                 expanded.push((full_alias, child_fs_path.clone(), child_branch));
             }
         }
