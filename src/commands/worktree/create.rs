@@ -546,7 +546,7 @@ fn ensure_intermediate_parents(
 
     for (alias, _source, _branch) in &repos {
         // Only nested aliases need intermediate parents
-        if !alias.contains('/') || alias == "." {
+        if !alias.contains('/') {
             continue;
         }
 
@@ -561,8 +561,12 @@ fn ensure_intermediate_parents(
                 continue;
             }
 
-            // Resolve the parent's source path
-            let parent_source = meta_dir.join(&parent_alias);
+            // Resolve the parent's source path via config lookup (respects custom
+            // `path` settings) with a fallback to direct path joining.
+            let parent_source = match lookup_nested_project(meta_dir, &parent_alias) {
+                Ok((source, _project)) => source,
+                Err(_) => meta_dir.join(&parent_alias),
+            };
             if !parent_source.exists() {
                 log::warn!(
                     "Intermediate parent '{}' for nested repo '{}' not found at {:?}, skipping",
@@ -573,7 +577,7 @@ fn ensure_intermediate_parents(
                 continue;
             }
 
-            // Only add if it's actually a git repo (has .git)
+            // Only add if it's actually a git repo (has .git dir or .git file)
             if !parent_source.join(".git").exists() {
                 log::warn!(
                     "Intermediate parent '{}' for nested repo '{}' exists but is not a git repo (no .git), skipping",
@@ -593,7 +597,11 @@ fn ensure_intermediate_parents(
     }
 
     if to_add.is_empty() {
-        return Ok(repos);
+        // Still sort so parent-before-child order is guaranteed even when
+        // all intermediate parents were already in the explicit list.
+        let mut sorted = repos;
+        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+        return Ok(sorted);
     }
 
     // Insert parents before the repos list so they're created first
