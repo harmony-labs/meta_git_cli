@@ -140,6 +140,9 @@ pub(crate) fn handle_create(
         )?
     };
 
+    // Expand meta: true repos to include their child repos in the worktree
+    let repos_to_create = expand_meta_children(repos_to_create, strict)?;
+
     // Apply --from-pr: override branch for the matching repo and fetch
     let mut repos_to_create = repos_to_create;
     if let Some((ref pr_repo_spec, _pr_num, ref pr_branch)) = from_pr_info {
@@ -517,4 +520,86 @@ fn build_nested_dep_graph(meta_dir: &std::path::Path) -> Result<DependencyGraph>
     }
 
     DependencyGraph::build(project_deps)
+}
+
+/// Expand `repos_to_create` to include children of `meta: true` projects.
+///
+/// When a repo in the list has its own `.meta.yaml` (i.e., it's a nested meta
+/// workspace), its child projects are added to the list so they get worktrees
+/// too. Without this, the worktree for a `meta: true` repo like `gitkb/` would
+/// be missing `gitkb/core/`, `gitkb/ui/`, etc.
+///
+/// Children inherit the task branch so the entire workspace is on the same branch.
+/// Uses `walk_meta_tree` which handles full recursive descent — if a child is
+/// itself `meta: true`, its children are included too.
+fn expand_meta_children(
+    repos: Vec<(String, std::path::PathBuf, String)>,
+    strict: bool,
+) -> Result<Vec<(String, std::path::PathBuf, String)>> {
+    // Two-pass approach: first collect all explicit aliases so they take priority
+    // over synthesized children (prevents order-dependent override issues when
+    // both a parent and an explicit child with a custom branch are in the list).
+    let explicit_aliases: HashSet<String> = repos.iter().map(|(a, _, _)| a.clone()).collect();
+
+    let mut expanded = Vec::new();
+    let mut seen = HashSet::new();
+
+    for (alias, source, branch) in repos {
+        if !seen.insert(alias.clone()) {
+            continue;
+        }
+        expanded.push((alias.clone(), source.clone(), branch.clone()));
+
+        // Skip root repo
+        if alias == "." {
+            continue;
+        }
+
+        // Check if this project has its own .meta config (meta: true).
+        // Important: use find_meta_config_in (checks only IN this dir),
+        // NOT find_meta_config (which walks UP to parent dirs).
+        if meta_core::config::find_meta_config_in(&source).is_none() {
+            continue;
+        }
+
+        // Walk the child's meta tree to find its sub-projects
+        let tree = match meta_core::config::walk_meta_tree(&source, None) {
+            Ok(t) => t,
+            Err(e) => {
+                super::warn_or_bail(
+                    strict,
+                    format!("Failed to walk meta tree for '{alias}': {e}"),
+                )?;
+                continue;
+            }
+        };
+
+        let project_map = meta_core::config::build_project_map(&tree, &source, "");
+        let mut added = 0usize;
+        for (child_path, (child_fs_path, _info)) in &project_map {
+            let full_alias = format!("{}/{}", alias, child_path);
+            // Skip if this alias was explicitly provided (it will be processed
+            // with its own branch/source from the input list)
+            if explicit_aliases.contains(&full_alias) {
+                continue;
+            }
+            if seen.insert(full_alias.clone()) {
+                // Children inherit the parent's already-resolved branch
+                let child_branch = branch.clone();
+                expanded.push((full_alias, child_fs_path.clone(), child_branch));
+                added += 1;
+            }
+        }
+
+        if added > 0 {
+            log::info!(
+                "Expanded '{}' (meta: true): added {} child repo{}",
+                alias,
+                added,
+                if added == 1 { "" } else { "s" }
+            );
+        }
+    }
+
+    Ok(expanded)
 }
