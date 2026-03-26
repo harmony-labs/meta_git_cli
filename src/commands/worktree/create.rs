@@ -564,11 +564,19 @@ fn ensure_intermediate_parents(
             // Resolve the parent's source path
             let parent_source = meta_dir.join(&parent_alias);
             if !parent_source.exists() {
+                log::warn!(
+                    "Intermediate parent '{}' for nested repo '{}' not found at {:?}, skipping",
+                    parent_alias, alias, parent_source
+                );
                 continue;
             }
 
             // Only add if it's actually a git repo (has .git)
             if !parent_source.join(".git").exists() {
+                log::warn!(
+                    "Intermediate parent '{}' for nested repo '{}' exists but is not a git repo (no .git), skipping",
+                    parent_alias, alias
+                );
                 continue;
             }
 
@@ -601,7 +609,9 @@ fn ensure_intermediate_parents(
     // Parents next (sorted to ensure parents come before children)
     to_add.sort_by(|a, b| a.0.cmp(&b.0));
     result.extend(to_add);
-    // Then the originally requested repos
+    // Then the originally requested repos — also sorted so nested explicit
+    // requests (e.g. --repo a/b --repo a/b/c) respect parent-before-child order
+    rest.sort_by(|a, b| a.0.cmp(&b.0));
     result.extend(rest);
 
     Ok(result)
