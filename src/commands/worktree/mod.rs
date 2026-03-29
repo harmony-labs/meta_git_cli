@@ -58,7 +58,9 @@ pub fn execute_worktree_command(
 
     // Inject --recursive if the protocol option was set but the flag wasn't in the
     // command args (the host strips global flags like --recursive before forwarding).
-    if recursive && !clap_args.iter().any(|a| a == "--recursive" || a == "-r") {
+    // Only inject for `create` — it's the only subcommand that declares this flag.
+    let is_create = matches!(clap_args.first().map(String::as_str), Some("create"));
+    if recursive && is_create && !clap_args.iter().any(|a| a == "--recursive" || a == "-r") {
         clap_args.push("--recursive".to_string());
     }
 
