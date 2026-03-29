@@ -51,6 +51,7 @@ pub fn execute_command(
             options.verbose,
             options.json_output,
             options.strict,
+            options.recursive,
         );
     }
 

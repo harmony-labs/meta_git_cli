@@ -36,6 +36,7 @@ pub fn execute_worktree_command(
     verbose: bool,
     json: bool,
     strict: bool,
+    recursive: bool,
 ) -> CommandResult {
     // Extract the subcommand name from the matched command prefix (if present).
     // When the plugin registers bare "worktree", the subcommand is in args[0] instead.
@@ -45,7 +46,7 @@ pub fn execute_worktree_command(
         .unwrap_or("");
 
     // Build args for clap
-    let clap_args: Vec<String> = if subcommand.is_empty() {
+    let mut clap_args: Vec<String> = if subcommand.is_empty() {
         // Bare "worktree" or "git worktree" — args already contains the subcommand (if any)
         args.to_vec()
     } else {
@@ -54,6 +55,12 @@ pub fn execute_worktree_command(
             .chain(args.iter().cloned())
             .collect()
     };
+
+    // Inject --recursive if the protocol option was set but the flag wasn't in the
+    // command args (the host strips global flags like --recursive before forwarding).
+    if recursive && !clap_args.iter().any(|a| a == "--recursive" || a == "-r") {
+        clap_args.push("--recursive".to_string());
+    }
 
     // No subcommand at all — show help
     if clap_args.is_empty() {
