@@ -144,16 +144,17 @@ pub(crate) fn handle_create(
         ensure_intermediate_parents(&meta_dir, repos_to_create, name, branch_flag)?;
 
     if dry_run {
-        print_create_dry_run(
+        let plan = CreateDryRunPlan {
             name,
-            &wt_dir,
-            &repos_to_create,
+            wt_dir: &wt_dir,
+            repos_to_create: &repos_to_create,
             from_ref,
             from_pr_spec,
             ephemeral,
             ttl_seconds,
-            &custom_meta,
-        );
+            custom_meta: &custom_meta,
+        };
+        print_create_dry_run(&plan);
         return Ok(());
     }
 
@@ -341,38 +342,41 @@ pub(crate) fn handle_create(
     Ok(())
 }
 
-fn print_create_dry_run(
-    name: &str,
-    wt_dir: &std::path::Path,
-    repos_to_create: &[(String, std::path::PathBuf, String)],
-    from_ref: Option<&str>,
-    from_pr_spec: Option<&str>,
+struct CreateDryRunPlan<'a> {
+    name: &'a str,
+    wt_dir: &'a std::path::Path,
+    repos_to_create: &'a [(String, std::path::PathBuf, String)],
+    from_ref: Option<&'a str>,
+    from_pr_spec: Option<&'a str>,
     ephemeral: bool,
     ttl_seconds: Option<u64>,
-    custom_meta: &HashMap<String, String>,
-) {
+    custom_meta: &'a HashMap<String, String>,
+}
+
+fn print_create_dry_run(plan: &CreateDryRunPlan<'_>) {
     println!(
-        "[DRY RUN] Would create worktree set '{name}' at {}",
-        wt_dir.display()
+        "[DRY RUN] Would create worktree set '{}' at {}",
+        plan.name,
+        plan.wt_dir.display()
     );
     println!();
 
-    if let Some(from_ref) = from_ref {
+    if let Some(from_ref) = plan.from_ref {
         println!("Start ref: {from_ref}");
     }
-    if let Some(from_pr_spec) = from_pr_spec {
+    if let Some(from_pr_spec) = plan.from_pr_spec {
         println!("PR source: would resolve {from_pr_spec} and fetch the matching head branch");
     }
-    if ephemeral {
+    if plan.ephemeral {
         println!("Ephemeral: true");
     }
-    if let Some(ttl) = ttl_seconds {
+    if let Some(ttl) = plan.ttl_seconds {
         println!("TTL: {}", format_duration(ttl as i64));
     }
-    if !custom_meta.is_empty() {
+    if !plan.custom_meta.is_empty() {
         println!(
             "Metadata: {}",
-            custom_meta
+            plan.custom_meta
                 .iter()
                 .map(|(k, v)| format!("{k}={v}"))
                 .collect::<Vec<_>>()
@@ -381,14 +385,14 @@ fn print_create_dry_run(
     }
 
     println!("Planned repo operations:");
-    if repos_to_create.is_empty() {
+    if plan.repos_to_create.is_empty() {
         println!("  (none)");
     }
-    for (alias, source, branch) in repos_to_create {
+    for (alias, source, branch) in plan.repos_to_create {
         let dest = if alias == "." {
-            wt_dir.to_path_buf()
+            plan.wt_dir.to_path_buf()
         } else {
-            wt_dir.join(alias)
+            plan.wt_dir.join(alias)
         };
         let mut cmd = format!(
             "git -C {} worktree add -b {} {}",
@@ -396,7 +400,7 @@ fn print_create_dry_run(
             shell_quote(branch),
             shell_quote(&dest.display().to_string())
         );
-        if let Some(from_ref) = from_ref {
+        if let Some(from_ref) = plan.from_ref {
             cmd.push(' ');
             cmd.push_str(&shell_quote(from_ref));
         }
