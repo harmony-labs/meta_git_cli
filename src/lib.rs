@@ -42,6 +42,8 @@ pub fn execute_command(
     );
     debug!("[meta_git_cli] Projects from meta_cli: {projects:?}");
 
+    let help_requested = has_help_token(command, args);
+
     // Worktree commands (meta worktree * and meta git worktree *)
     // Checked before --help intercept so worktree subcommands can handle their own --help via clap
     if command.starts_with("worktree") || command.starts_with("git worktree") {
@@ -52,11 +54,18 @@ pub fn execute_command(
             options.json_output,
             options.strict,
             options.recursive,
+            options.dry_run,
         );
     }
 
-    // Intercept --help/-h before dispatching to git subcommand handlers
-    if args.iter().any(|a| a == "--help" || a == "-h") {
+    if command.starts_with("git snapshot") && help_requested {
+        return snapshot::execute_snapshot_command_help(command);
+    }
+
+    if help_requested {
+        if let Some(help) = build_passthrough_git_help(command, args, projects, cwd) {
+            return CommandResult::Message(help);
+        }
         return CommandResult::ShowHelp(None);
     }
 
@@ -88,6 +97,88 @@ fn is_remote_command(command: &str) -> bool {
     let remote_commands = ["push", "pull", "fetch", "clone", "ls-remote"];
     let cmd_lower = command.to_lowercase();
     remote_commands.iter().any(|rc| cmd_lower.contains(rc))
+}
+
+fn has_help_token(command: &str, args: &[String]) -> bool {
+    command
+        .split_whitespace()
+        .chain(args.iter().map(String::as_str))
+        .any(|arg| arg == "--help" || arg == "-h")
+}
+
+fn build_passthrough_git_help(
+    command: &str,
+    args: &[String],
+    projects: &[String],
+    cwd: &Path,
+) -> Option<String> {
+    let command_words: Vec<&str> = command
+        .split_whitespace()
+        .filter(|word| *word != "--help" && *word != "-h")
+        .collect();
+
+    if command_words.first().copied() != Some("git") {
+        return None;
+    }
+
+    let adapted_commands = [
+        "clone", "status", "update", "commit", "snapshot", "worktree",
+    ];
+    let git_args: Vec<String> = command_words
+        .iter()
+        .skip(1)
+        .map(|s| s.to_string())
+        .chain(
+            args.iter()
+                .filter(|arg| arg.as_str() != "--help" && arg.as_str() != "-h")
+                .cloned(),
+        )
+        .collect();
+    let subcommand = git_args.first()?;
+
+    if adapted_commands.contains(&subcommand.as_str()) {
+        return None;
+    }
+
+    let display_command = format!("git {}", git_args.join(" "));
+    let scope = match get_project_directories_with_fallback(projects, cwd) {
+        Ok(dirs) => {
+            if dirs.is_empty() {
+                "Current scope: no repos were discovered.".to_string()
+            } else {
+                format!(
+                    "Current scope: {} repo(s): {}",
+                    dirs.len(),
+                    dirs.iter()
+                        .map(|d| d.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
+        }
+        Err(_) => "Current scope: unable to resolve repos from the current directory.".to_string(),
+    };
+
+    Some(format!(
+        "meta git {subcommand} - Pass-through git command\n\n\
+Usage: meta git {subcommand} [GIT_ARGS...] [META_OPTIONS]\n\n\
+Runs `{display_command}` in each repo in the current meta workspace.\n\n\
+{scope}\n\n\
+Meta options:\n\
+  --dry-run             Show the command that would run in each repo\n\
+  --recursive           Include repos from nested meta workspaces\n\
+  --depth <N>           Limit recursive traversal depth\n\
+  --include <REPOS>     Only run in specified repos/directories\n\
+  --exclude <REPOS>     Skip specified repos/directories\n\
+  --tag <TAGS>          Filter by project tag(s), comma-separated\n\
+  --parallel            Run repo commands concurrently\n\
+  --sequential          Run repo commands one at a time\n\n\
+Examples:\n\
+  meta git {subcommand}\n\
+  meta git {subcommand} --dry-run\n\
+  meta git {subcommand} --recursive --dry-run\n\n\
+Git help: run `git {subcommand} --help` directly for upstream git options."
+    ))
 }
 
 /// Execute a raw git command across all repos (fallback for unrecognized subcommands)

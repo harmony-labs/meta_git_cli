@@ -37,6 +37,7 @@ pub fn execute_worktree_command(
     json: bool,
     strict: bool,
     recursive: bool,
+    dry_run: bool,
 ) -> CommandResult {
     // Extract the subcommand name from the matched command prefix (if present).
     // When the plugin registers bare "worktree", the subcommand is in args[0] instead.
@@ -63,9 +64,16 @@ pub fn execute_worktree_command(
     if recursive && is_create && !clap_args.iter().any(|a| a == "--recursive" || a == "-r") {
         clap_args.push("--recursive".to_string());
     }
+    if dry_run && is_create && !clap_args.iter().any(|a| a == "--dry-run") {
+        clap_args.push("--dry-run".to_string());
+    }
 
     // No subcommand at all — show help
     if clap_args.is_empty() {
+        print_worktree_help();
+        return CommandResult::Message(String::new());
+    }
+    if clap_args.len() == 1 && matches!(clap_args[0].as_str(), "--help" | "-h") {
         print_worktree_help();
         return CommandResult::Message(String::new());
     }
@@ -82,7 +90,7 @@ pub fn execute_worktree_command(
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => {
                     // These are success cases - print and exit 0
                     println!("{e}");
-                    CommandResult::ShowHelp(None)
+                    CommandResult::Message(String::new())
                 }
                 _ => {
                     // Actual parse errors
@@ -190,6 +198,7 @@ fn write_worktree_help(w: &mut dyn std::io::Write) {
         w,
         "  --from-pr <OWNER/REPO#N> Start from a PR's head branch"
     );
+    let _ = writeln!(w, "  --dry-run                Preview planned operations");
     let _ = writeln!(w, "  --ephemeral              Mark for automatic cleanup");
     let _ = writeln!(
         w,
