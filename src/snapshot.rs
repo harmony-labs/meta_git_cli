@@ -45,6 +45,83 @@ Use --force to skip confirmation on restore, --dry-run to preview."#,
     Ok(CommandResult::Message(String::new()))
 }
 
+pub(crate) fn execute_snapshot_command_help(command: &str) -> CommandResult {
+    let subcommand = command
+        .split_whitespace()
+        .filter(|word| *word != "--help" && *word != "-h")
+        .nth(2);
+
+    let Some(subcommand) = subcommand else {
+        return execute_snapshot_help().unwrap_or_else(|e| {
+            CommandResult::Error(format!("Failed to show snapshot help: {e}"))
+        });
+    };
+
+    let help = match subcommand {
+        "create" => {
+            r#"meta git snapshot create - Save workspace git state
+
+Usage: meta git snapshot create <NAME>
+
+Records each repo's current SHA, branch, and dirty status.
+
+Examples:
+  meta git snapshot create before-refactor
+  meta git snapshot create before-upgrade"#
+        }
+        "list" => {
+            r#"meta git snapshot list - List saved workspace snapshots
+
+Usage: meta git snapshot list
+
+Shows snapshot names, creation times, repo counts, and dirty repo counts.
+
+Examples:
+  meta git snapshot list"#
+        }
+        "show" => {
+            r#"meta git snapshot show - Display one snapshot
+
+Usage: meta git snapshot show <NAME>
+
+Shows per-repo branch, SHA, and dirty state recorded in a snapshot.
+
+Examples:
+  meta git snapshot show before-refactor"#
+        }
+        "restore" => {
+            r#"meta git snapshot restore - Restore workspace git state
+
+Usage: meta git snapshot restore <NAME> [--force] [--dry-run]
+
+Restores repos to the recorded branches/SHAs. Dirty repos are stashed before restore.
+
+Options:
+  --force     Skip confirmation
+  --dry-run   Preview restore actions without changing repos
+
+Examples:
+  meta git snapshot restore before-refactor --dry-run
+  meta git snapshot restore before-refactor --force"#
+        }
+        "delete" => {
+            r#"meta git snapshot delete - Delete a saved snapshot
+
+Usage: meta git snapshot delete <NAME>
+
+Examples:
+  meta git snapshot delete before-refactor"#
+        }
+        _ => {
+            return CommandResult::ShowHelp(Some(format!(
+                "unknown snapshot command '{subcommand}'"
+            )));
+        }
+    };
+
+    CommandResult::Message(help.to_string())
+}
+
 /// Create a snapshot of the current workspace state
 pub(crate) fn execute_snapshot_create(
     args: &[String],

@@ -52,6 +52,10 @@ pub struct CreateArgs {
     #[arg(long, conflicts_with = "repos")]
     pub all: bool,
 
+    /// Preview planned worktree operations without creating anything
+    #[arg(long)]
+    pub dry_run: bool,
+
     /// Alias for positional <COMMIT-ISH> (hidden, kept for backward compatibility)
     #[arg(long, value_name = "REF", hide = true, conflicts_with_all = ["commit_ish", "from_pr"])]
     pub from_ref: Option<String>,

@@ -121,6 +121,7 @@ fn handle_ephemeral_exec(args: ExecArgs, verbose: bool, json: bool) -> Result<()
         branch: args.branch,
         repos: args.repos,
         all: args.all,
+        dry_run: false,
         from_ref: args.from_ref,
         from_pr: args.from_pr,
         ephemeral: true,

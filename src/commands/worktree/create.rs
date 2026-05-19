@@ -29,6 +29,7 @@ pub(crate) fn handle_create(
     let branch_flag = args.branch.as_deref();
     let repo_specs = &args.repos;
     let use_all = args.all;
+    let dry_run = args.dry_run;
     let ephemeral = args.ephemeral;
     let ttl_seconds = args.ttl;
     // Parse custom metadata, collecting any invalid entries for strict mode
@@ -57,9 +58,6 @@ pub(crate) fn handle_create(
     if from_ref.is_some() && from_pr_spec.is_some() {
         anyhow::bail!("Cannot specify both a commit-ish and --from-pr");
     }
-
-    // Resolve --from-pr: get PR head branch and identify matching repo
-    let from_pr_info = from_pr_spec.map(resolve_from_pr).transpose()?;
 
     let no_deps = args.no_deps;
     let recursive = args.recursive;
@@ -145,8 +143,23 @@ pub(crate) fn handle_create(
     let repos_to_create =
         ensure_intermediate_parents(&meta_dir, repos_to_create, name, branch_flag)?;
 
-    // Apply --from-pr: override branch for the matching repo and fetch
+    if dry_run {
+        print_create_dry_run(
+            name,
+            &wt_dir,
+            &repos_to_create,
+            from_ref,
+            from_pr_spec,
+            ephemeral,
+            ttl_seconds,
+            &custom_meta,
+        );
+        return Ok(());
+    }
+
+    // Resolve/apply --from-pr: get PR head branch, override branch for the matching repo, and fetch
     let mut repos_to_create = repos_to_create;
+    let from_pr_info = from_pr_spec.map(resolve_from_pr).transpose()?;
     if let Some((ref pr_repo_spec, _pr_num, ref pr_branch)) = from_pr_info {
         let mut matched = false;
         for (alias, source, branch) in repos_to_create.iter_mut() {
@@ -326,6 +339,87 @@ pub(crate) fn handle_create(
     }
 
     Ok(())
+}
+
+fn print_create_dry_run(
+    name: &str,
+    wt_dir: &std::path::Path,
+    repos_to_create: &[(String, std::path::PathBuf, String)],
+    from_ref: Option<&str>,
+    from_pr_spec: Option<&str>,
+    ephemeral: bool,
+    ttl_seconds: Option<u64>,
+    custom_meta: &HashMap<String, String>,
+) {
+    println!(
+        "[DRY RUN] Would create worktree set '{name}' at {}",
+        wt_dir.display()
+    );
+    println!();
+
+    if let Some(from_ref) = from_ref {
+        println!("Start ref: {from_ref}");
+    }
+    if let Some(from_pr_spec) = from_pr_spec {
+        println!("PR source: would resolve {from_pr_spec} and fetch the matching head branch");
+    }
+    if ephemeral {
+        println!("Ephemeral: true");
+    }
+    if let Some(ttl) = ttl_seconds {
+        println!("TTL: {}", format_duration(ttl as i64));
+    }
+    if !custom_meta.is_empty() {
+        println!(
+            "Metadata: {}",
+            custom_meta
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+
+    println!("Planned repo operations:");
+    if repos_to_create.is_empty() {
+        println!("  (none)");
+    }
+    for (alias, source, branch) in repos_to_create {
+        let dest = if alias == "." {
+            wt_dir.to_path_buf()
+        } else {
+            wt_dir.join(alias)
+        };
+        let mut cmd = format!(
+            "git -C {} worktree add -b {} {}",
+            shell_quote(&source.display().to_string()),
+            shell_quote(branch),
+            shell_quote(&dest.display().to_string())
+        );
+        if let Some(from_ref) = from_ref {
+            cmd.push(' ');
+            cmd.push_str(&shell_quote(from_ref));
+        }
+        println!("  {alias}:");
+        println!("    source: {}", source.display());
+        println!("    dest:   {}", dest.display());
+        println!("    branch: {branch}");
+        println!("    bash:   {cmd}");
+    }
+
+    println!();
+    println!("No directories, branches, store entries, hooks, or .gitignore changes were written.");
+}
+
+fn shell_quote(value: &str) -> String {
+    if value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | ':'))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
 }
 
 /// Resolve repos with automatic dependency resolution.
